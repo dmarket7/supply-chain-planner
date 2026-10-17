@@ -1,0 +1,9 @@
+name = "supply-chain-planner"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (set with `wrangler pages secret put <NAME>` or in the dashboard):
+#   DATABASE_URL    Neon pooled connection string
+#   NEON_AUTH_URL   e.g. https://ep-xxx.neonauth.us-east-2.aws.neon.build/neondb/auth
+# Locally, put them in .dev.vars (see .dev.vars.example).
