@@ -7,8 +7,8 @@
     "dev": "vite",
     "dev:api": "mkdir -p dist && wrangler pages dev --port 8788",
     "build": "tsc --noEmit -p . && vite build",
-    "preview": "npm run build && wrangler pages dev",
-    "deploy": "npm run build && wrangler pages deploy",
+    "preview": "pnpm build && wrangler pages dev",
+    "deploy": "pnpm build && wrangler pages deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "sample:xlsx": "node scripts/make-sample.mjs",
@@ -45,5 +45,12 @@
     "vite": "^8.3.4",
     "vitest": "^4.1.12",
     "wrangler": "^4.86.0"
+  },
+  "packageManager": "pnpm@10.6.3",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
   }
 }

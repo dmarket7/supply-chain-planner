@@ -31,28 +31,30 @@ drizzle/                SQL migrations
 
 ## Setup
 
+Requires Node.js 20+ and [pnpm](https://pnpm.io/installation) 10 (`corepack enable` picks up the version pinned in `package.json`).
+
 1. **Neon**: create a project, then a `dev` branch for local work. In the console, enable **Auth** for the project and copy the Auth URL.
 2. **Env files**:
    - `cp .env.example .env`: set `VITE_NEON_AUTH_URL` and `DATABASE_URL` (used by drizzle-kit).
    - `cp .dev.vars.example .dev.vars`: set `DATABASE_URL` (pooled) and `NEON_AUTH_URL` (used by Functions).
-3. `npm install --legacy-peer-deps` (the Neon auth SDK's peer ranges trip npm 10's resolver)
-4. `npm run db:migrate` creates the tables.
+3. `pnpm install`
+4. `pnpm db:migrate` creates the tables.
 5. Run locally in two terminals:
-   - `npm run dev:api`: Pages Functions on http://localhost:8788
-   - `npm run dev`: the app on http://localhost:5173 (proxies `/api` to 8788)
-6. Optional: `npm run sample:xlsx` writes a fake report to `samples/inbound-sample.xlsx` that you can upload.
+   - `pnpm dev:api`: Pages Functions on http://localhost:8788
+   - `pnpm dev`: the app on http://localhost:5173 (proxies `/api` to 8788)
+6. Optional: `pnpm sample:xlsx` writes a fake report to `samples/inbound-sample.xlsx` that you can upload.
 
 ## Deploy (Cloudflare Pages)
 
 ```sh
-npx wrangler login
-npx wrangler pages project create supply-chain-planner
-npx wrangler pages secret put DATABASE_URL     # Neon main branch, pooled
-npx wrangler pages secret put NEON_AUTH_URL
-VITE_NEON_AUTH_URL=... npm run deploy
+pnpm wrangler login
+pnpm wrangler pages project create supply-chain-planner
+pnpm wrangler pages secret put DATABASE_URL     # Neon main branch, pooled
+pnpm wrangler pages secret put NEON_AUTH_URL
+VITE_NEON_AUTH_URL=... pnpm run deploy   # not `pnpm deploy`, which is a built-in pnpm command
 ```
 
-Or connect the GitHub repo in the Cloudflare dashboard with build command `npm run build`, output dir `dist`, and the same variables. Add your Pages domain to Neon Auth's trusted origins.
+Or connect the GitHub repo in the Cloudflare dashboard with build command `pnpm build` (Cloudflare detects pnpm from `pnpm-lock.yaml`), output dir `dist`, and the same variables. Add your Pages domain to Neon Auth's trusted origins.
 
 ## Importing reports
 
@@ -72,7 +74,7 @@ Implement `TrackingProvider` (`server/tracking/provider.ts`) for an aggregator (
 
 | | |
 |---|---|
-| `npm test` | Vitest: parsing, mapping, dates, carrier detection, import planning, reports |
-| `npm run typecheck` | TypeScript |
-| `npm run db:generate` | New migration after editing `server/db/schema.ts` |
-| `npm run db:studio` | Browse the DB |
+| `pnpm test` | Vitest: parsing, mapping, dates, carrier detection, import planning, reports |
+| `pnpm typecheck` | TypeScript |
+| `pnpm db:generate` | New migration after editing `server/db/schema.ts` |
+| `pnpm db:studio` | Browse the DB |
