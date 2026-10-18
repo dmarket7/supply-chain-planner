@@ -17,7 +17,10 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, (body as { error?: string })?.error ?? res.statusText, body);
+  if (!res.ok) {
+    const { error, reason } = (body ?? {}) as { error?: string; reason?: string };
+    throw new ApiError(res.status, `${error ?? res.statusText}${reason ? ` (${reason})` : ''}`, body);
+  }
   return body as T;
 }
 

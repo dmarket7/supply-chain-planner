@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { arrivalVariance, daysBetween } from '../shared/dates';
 import type { Shipment } from '../shared/types';
 import { planImport, planRow, type ExistingShipment, type IncomingRow } from '../server/importPlan';
+import { normalizeAuthUrl } from '../server/auth';
 import { groupInboundByDay, supplierScorecard, toArrivalEntry } from '../server/reports';
 
 const incoming = (over: Partial<IncomingRow>): IncomingRow => ({
@@ -189,5 +190,17 @@ describe('reports', () => {
       { supplier: 'Globex', arrivals: 1, onTime: 1, onTimePct: 100, avgVarianceDays: 0 },
     ]);
     expect(supplierScorecard(entries, true)[0]).toMatchObject({ supplier: 'Acme', arrivals: 3, onTime: 2 });
+  });
+});
+
+describe('normalizeAuthUrl', () => {
+  it.each([
+    ['https://ep-x.neonauth.aws.neon.tech/neondb/auth', 'https://ep-x.neonauth.aws.neon.tech/neondb/auth'],
+    ['  "https://ep-x.neonauth.aws.neon.tech/neondb/auth/"  ', 'https://ep-x.neonauth.aws.neon.tech/neondb/auth'],
+    ["'https://ep-x.neonauth.aws.neon.tech/neondb/auth//'", 'https://ep-x.neonauth.aws.neon.tech/neondb/auth'],
+    ['', null],
+    ['not a url', null],
+  ])('%j -> %j', (raw, expected) => {
+    expect(normalizeAuthUrl(raw)).toBe(expected);
   });
 });
