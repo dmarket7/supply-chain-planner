@@ -6,7 +6,7 @@ import { getDb } from '../db/client';
 import { promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
 import { groupInboundByDay, supplierScorecard, toArrivalEntry } from '../reports';
-import { shipmentColumns } from './common';
+import { branchFilter, shipmentColumns } from './common';
 
 export const reportsRoutes = new Hono<AppEnv>();
 
@@ -20,7 +20,7 @@ reportsRoutes.get('/inbound-by-day', async (c) => {
     .select(shipmentColumns)
     .from(shipments)
     .innerJoin(suppliers, eq(suppliers.id, shipments.supplierId))
-    .where(and(gte(expectedDate, from), lte(expectedDate, to)))
+    .where(and(gte(expectedDate, from), lte(expectedDate, to), branchFilter(c.req.query('branch'))))
     .orderBy(asc(expectedDate));
   return c.json({ from, to, days: groupInboundByDay(rows as Shipment[]) });
 });
@@ -46,6 +46,7 @@ reportsRoutes.get('/arrivals', async (c) => {
         gte(shipments.actualArrivalDate, from),
         lte(shipments.actualArrivalDate, to),
         supplier ? eq(suppliers.name, supplier) : undefined,
+        branchFilter(c.req.query('branch')),
       ),
     )
     .orderBy(asc(shipments.actualArrivalDate));

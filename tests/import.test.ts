@@ -54,6 +54,7 @@ describe('parseSheet', () => {
 describe('guessMapping', () => {
   it('maps the Supplier POs tab', () => {
     expect(guessMapping(SUPPLIER_PO_HEADERS)).toEqual({
+      branch: 'Branch',
       supplier: 'SupplierName',
       poNumber: 'WintecPO',
       lineRef: 'WintecPOLine',
@@ -227,5 +228,14 @@ describe('dedupeKeysForFile', () => {
         { poNumber: null, lineRef: null, asn: null, trackingNumber: '1z 999' },
       ]),
     ).toEqual(['po:0157628:4-3:87851017', 'po:0157628:4-3:87851017#2', 'po:0157628:4-3:', 'trk:1Z999']);
+  });
+});
+
+describe('branch', () => {
+  it('is mapped from the Branch column and carried on each line', () => {
+    const mapping = guessMapping(SUPPLIER_PO_HEADERS);
+    expect(mapping.branch).toBe('Branch');
+    const raw = { ...Object.fromEntries(SUPPLIER_PO_HEADERS.map((h) => [h, null])), Branch: ' JIT-MSUS-META ', SupplierName: 'ACME', WintecPO: '0150001', POStatus: 'Open' };
+    expect(normalizeRow(raw, mapping, 2, opts).shipment?.branch).toBe('JIT-MSUS-META');
   });
 });

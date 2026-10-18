@@ -5,15 +5,17 @@ import { SHIPMENT_STATUSES, type ShipmentDetail } from '../../shared/types';
 import { getDb } from '../db/client';
 import { promisedDateHistory, shipments, suppliers, trackingEvents } from '../db/schema';
 import type { AppEnv } from '../env';
-import { shipmentColumns } from './common';
+import { branchFilter, shipmentColumns } from './common';
 
 export const shipmentsRoutes = new Hono<AppEnv>();
 
 const expectedDate = sql`coalesce(${shipments.estimatedArrivalDate}, ${shipments.promisedArrivalDate})`;
 
 shipmentsRoutes.get('/', async (c) => {
-  const { status, carrier, supplier, from, to, q } = c.req.query();
+  const { status, carrier, supplier, branch, from, to, q } = c.req.query();
   const filters: SQL[] = [];
+  const byBranch = branchFilter(branch);
+  if (byBranch) filters.push(byBranch);
   if (status && (SHIPMENT_STATUSES as readonly string[]).includes(status)) {
     filters.push(eq(shipments.status, status as (typeof SHIPMENT_STATUSES)[number]));
   }

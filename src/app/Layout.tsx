@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { BranchSelect } from './branch';
 import { useSession } from './session';
 
 const NAV = [
@@ -30,7 +31,8 @@ export function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
+          <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500">
+            <BranchSelect />
             <span className="hidden sm:inline">{user?.email}</span>
             <button onClick={() => void signOut()} className="hover:underline">Sign out</button>
           </div>

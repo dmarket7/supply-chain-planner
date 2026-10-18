@@ -42,6 +42,7 @@ const shipment = (over: Partial<Shipment>): Shipment => ({
   partNumber: null,
   itemDescription: null,
   commodity: null,
+  branch: null,
   warehouse: null,
   quantity: null,
   carrier: 'UPS',

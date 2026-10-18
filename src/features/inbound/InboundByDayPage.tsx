@@ -5,7 +5,9 @@ import type { InboundDay } from '../../../shared/types';
 import { Card, DateInput, Empty, ErrorNote, PageHeader, StatTile, StatusBadge, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
 import { formatDate, poLineLabel } from '../../lib/format';
+import { useBranch } from '../../app/branch';
 import { ShipmentDrawer } from '../shipments/ShipmentDrawer';
+import { BranchSummaryTable } from './BranchSummaryTable';
 import { InboundChart } from './InboundChart';
 
 export function InboundByDayPage() {
@@ -13,10 +15,11 @@ export function InboundByDayPage() {
   const [to, setTo] = useState(addDays(todayIso(), 21));
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const { branch } = useBranch();
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['inbound-by-day', from, to],
-    queryFn: () => api<{ days: InboundDay[] }>(`/reports/inbound-by-day${qs({ from, to })}`),
+    queryKey: ['inbound-by-day', from, to, branch],
+    queryFn: () => api<{ days: InboundDay[] }>(`/reports/inbound-by-day${qs({ from, to, branch: branch || undefined })}`),
   });
   const days = data?.days ?? [];
   const today = todayIso();
@@ -35,7 +38,7 @@ export function InboundByDayPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Inbound by day"
+        title={branch ? `Inbound by day · ${branch}` : 'Inbound by day'}
         description="PO lines grouped by expected arrival (carrier ETA when known, otherwise the supplier's ETA). Lines awaiting shipment have no date yet and are listed on the Shipments page."
         actions={
           <>
@@ -52,6 +55,8 @@ export function InboundByDayPage() {
         <StatTile label="Past due, not arrived" value={overdue} hint="Expected date passed in this range" />
         <StatTile label="In range" value={total} />
       </div>
+
+      {!branch && <BranchSummaryTable />}
 
       <Card>
         {isLoading ? (

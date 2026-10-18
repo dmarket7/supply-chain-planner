@@ -5,6 +5,7 @@ import type { ArrivalsResponse } from '../../../shared/types';
 import { Card, DateInput, Empty, ErrorNote, PageHeader, StatTile, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
 import { ARRIVAL_SOURCE_LABELS, arrivalLabel, formatDate, poLineLabel, varianceLabel } from '../../lib/format';
+import { useBranch } from '../../app/branch';
 import { ShipmentDrawer } from '../shipments/ShipmentDrawer';
 
 function VarianceCell({ days }: { days: number }) {
@@ -22,13 +23,14 @@ export function ArrivalLogPage() {
   const [to, setTo] = useState(todayIso());
   const [supplier, setSupplier] = useState('');
   const [includeAssumed, setIncludeAssumed] = useState(false);
+  const { branch } = useBranch();
   const [selected, setSelected] = useState<number | null>(null);
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['arrivals', from, to, supplier, includeAssumed],
+    queryKey: ['arrivals', from, to, supplier, includeAssumed, branch],
     queryFn: () =>
       api<ArrivalsResponse>(
-        `/reports/arrivals${qs({ from, to, supplier: supplier || undefined, includeAssumed: includeAssumed ? '1' : undefined })}`,
+        `/reports/arrivals${qs({ from, to, supplier: supplier || undefined, branch: branch || undefined, includeAssumed: includeAssumed ? '1' : undefined })}`,
       ),
   });
   const allEntries = data?.entries ?? [];
@@ -42,7 +44,7 @@ export function ArrivalLogPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Arrival log"
+        title={branch ? `Arrival log · ${branch}` : 'Arrival log'}
         description="Arrival compared with the first ETA the supplier gave. Arrivals marked est. are inferred from when the line closed between two reports."
         actions={
           <>

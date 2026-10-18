@@ -38,6 +38,8 @@ const shipmentFields = z.object({
     partNumber: z.string().nullish(),
     itemDescription: z.string().nullish(),
     commodity: z.string().nullish(),
+    /** ERP branch / warehouse ID, e.g. JIT-MSUS-META. Used to segment every report. */
+    branch: z.string().nullish(),
     warehouse: z.string().nullish(),
     quantity: z.number().nullish(),
     carrier: z.string().nullish(),
@@ -108,6 +110,7 @@ export const TARGET_FIELDS = [
   'partNumber',
   'itemDescription',
   'commodity',
+  'branch',
   'warehouse',
   'quantity',
 ] as const;
@@ -134,6 +137,7 @@ export interface Shipment {
   partNumber: string | null;
   itemDescription: string | null;
   commodity: string | null;
+  branch: string | null;
   warehouse: string | null;
   quantity: number | null;
   carrier: string | null;
@@ -151,6 +155,18 @@ export interface Shipment {
   arrivalWindowEnd: string | null;
   status: ShipmentStatus;
   lastTrackedAt: string | null;
+}
+
+export interface BranchSummary {
+  branch: string;
+  lines: number;
+  awaitingShipment: number;
+  /** Not arrived and has an expected date. */
+  inbound: number;
+  dueToday: number;
+  next7Days: number;
+  pastDue: number;
+  arrivedLast30Days: number;
 }
 
 export interface TrackingEvent {

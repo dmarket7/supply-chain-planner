@@ -65,6 +65,7 @@ export const shipments = pgTable('shipments', {
   partNumber: text('part_number'),
   itemDescription: text('item_description'),
   commodity: text('commodity'),
+  branch: text('branch'),
   warehouse: text('warehouse'),
   quantity: numeric('quantity', { mode: 'number' }),
   carrier: text('carrier'),
@@ -94,6 +95,7 @@ export const shipments = pgTable('shipments', {
   index('shipments_expected_idx').on(sql`coalesce(${t.estimatedArrivalDate}, ${t.promisedArrivalDate})`),
   index('shipments_actual_idx').on(t.actualArrivalDate),
   index('shipments_status_idx').on(t.status),
+  index('shipments_branch_idx').on(t.branch),
   index('shipments_tracking_idx').on(t.trackingNumber),
   index('shipments_po_idx').on(t.poNumber, t.lineRef),
 ]);

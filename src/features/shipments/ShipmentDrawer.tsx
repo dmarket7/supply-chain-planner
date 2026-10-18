@@ -64,6 +64,7 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
               {row('Item', data.itemDescription)}
               {row('Commodity', data.commodity)}
               {row('Quantity', data.quantity?.toLocaleString())}
+              {row('Branch', data.branch)}
               {row('Warehouse', data.warehouse)}
               {row('Carrier', data.carrier && `${data.carrier}${data.mode ? ` (${data.mode})` : ''}`)}
               {row('Tracking #', data.trackingNumber && <span className="font-mono text-xs">{data.trackingNumber}</span>)}

@@ -255,6 +255,7 @@ export function normalizeRow(
     partNumber: text(get('partNumber')),
     itemDescription: text(get('itemDescription')),
     commodity: text(get('commodity')),
+    branch: text(get('branch')),
     warehouse: text(get('warehouse')),
     quantity: quantity !== null && !Number.isNaN(quantity) ? quantity : null,
     carrier: guess.carrier,

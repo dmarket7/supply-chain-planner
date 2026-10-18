@@ -16,6 +16,7 @@ export const FIELD_LABELS: Record<TargetField, string> = {
   partNumber: 'Part number',
   itemDescription: 'Item description',
   commodity: 'Commodity',
+  branch: 'Branch',
   warehouse: 'Warehouse',
   quantity: 'Quantity',
 };
@@ -23,7 +24,7 @@ export const FIELD_LABELS: Record<TargetField, string> = {
 export const REQUIRED_FIELDS: TargetField[] = ['supplier'];
 
 /** Columns that matter most for the report; shown first in the mapper. */
-export const PRIMARY_FIELDS: TargetField[] = ['supplier', 'poNumber', 'lineRef', 'asn', 'poStatus', 'trackingNumber', 'carrier', 'promisedArrivalDate', 'shipDate'];
+export const PRIMARY_FIELDS: TargetField[] = ['branch', 'supplier', 'poNumber', 'lineRef', 'asn', 'poStatus', 'trackingNumber', 'carrier', 'promisedArrivalDate', 'shipDate'];
 
 /**
  * Normalized header synonyms, most specific first. Includes the Meerkat "Supplier POs" headers
@@ -45,6 +46,7 @@ const SYNONYMS: Record<TargetField, string[]> = {
   partNumber: ['wintecpn', 'partnumber', 'pn', 'sku', 'itemnumber'],
   itemDescription: ['description', 'itemdescription', 'item', 'material'],
   commodity: ['commodity', 'category'],
+  branch: ['branch', 'branchcode', 'site', 'plant', 'warehouseid'],
   warehouse: ['warehouselocation', 'warehouse', 'shipto', 'location'],
   quantity: ['poorderqty', 'quantity', 'qty', 'orderqty', 'qtyshipped', 'units'],
 };

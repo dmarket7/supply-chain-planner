@@ -79,9 +79,27 @@ There is no receipt-date column, so the actual arrival date comes from the best 
 
 On-time performance is measured against the **first ETA** the supplier gave. Later ETA changes are logged as slips.
 
-## Adding carrier tracking
+## Branches
 
-Implement `TrackingProvider` (`server/tracking/provider.ts`) for an aggregator (Ship24, AfterShip, 17TRACK…) or a carrier API. Register it in `server/tracking/registry.ts` and add its key as a Pages secret. "Refresh tracking" on the Shipments page and `POST /api/tracking/refresh` will then update status, ETA, events, and arrival dates. For scheduled refreshes, add a small Worker with a Cron Trigger that calls `refreshTracking()`, since Pages Functions can't run on cron.
+Every line carries the report's **Branch** (ERP warehouse ID, e.g. `JIT-MSUS-META`). The branch selector in the header filters every page and is remembered in the browser. With "All branches" selected, the Inbound page shows a per-branch summary (due today, next 7 days, past due, awaiting shipment, arrived in the last 30 days); click a row to switch to that branch. Lines imported without a branch appear as `(none)`.
+
+## Carrier tracking (Ship24)
+
+Tracking uses [Ship24](https://www.ship24.com/), an aggregator covering FedEx, DHL, UPS, air waybills and forwarders, behind the `TrackingProvider` interface (`server/tracking/`).
+
+1. Create a Ship24 account and an API key (the PRO plan covers 1,000 new tracking numbers a month; refreshing a number already tracked doesn't count again).
+2. `pnpm wrangler pages secret put SHIP24_API_KEY` (locally: add it to `.dev.vars`).
+3. `/api/health` shows `"SHIP24_API_KEY":"ok"`, and the Shipments page enables its buttons:
+   - **Refresh tracking:** looks up lines that haven't arrived.
+   - **Confirm estimated arrivals:** looks up arrived lines whose date is only a report estimate, to replace it with the carrier's delivery date. This uses quota for each new number, so run it per branch if quota is tight.
+
+How it works:
+
+- Each distinct tracking number is looked up once and applied to every PO line that shares it. Only recognized formats are looked up (unrecognized references would just use quota), and a number is re-checked at most every 6 hours.
+- Refresh runs in batches of 20 numbers, because Workers' free plan allows 50 outbound requests per invocation; the app keeps calling until nothing is left (or Ship24 rate-limits, which pauses it).
+- A delivery from tracking replaces report-based estimates but never a date entered by hand. A delivery dated before the line's ship date is ignored (carriers reuse numbers, especially 10-digit DHL ones).
+- **DSV** house bills (`HKG…`, DBS-TW branch) go through Ship24 too; if coverage turns out poor, add a DSV provider using Wintec's DSV Track & Trace API access next to `ship24.ts` and list it first in `registry.ts`.
+- Scheduled refresh: Pages Functions can't run on cron, so add a small Worker with a Cron Trigger that calls `refreshTracking()` in a loop.
 
 ## Scripts
 
