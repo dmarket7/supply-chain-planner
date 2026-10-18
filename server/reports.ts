@@ -5,11 +5,15 @@ export function expectedArrival(s: Pick<Shipment, 'estimatedArrivalDate' | 'prom
   return s.estimatedArrivalDate ?? s.promisedArrivalDate;
 }
 
-/** Groups shipments by expected arrival day (tracking ETA if known, else promised date). */
+/**
+ * Groups shipments by expected arrival day (tracking ETA if known, else the supplier's ETA).
+ * Lines with neither (awaiting shipment) have no day and are left out.
+ */
 export function groupInboundByDay(shipments: Shipment[]): InboundDay[] {
   const days = new Map<string, InboundDay>();
   for (const s of shipments) {
     const date = expectedArrival(s);
+    if (!date) continue;
     let day = days.get(date);
     if (!day) {
       day = { date, total: 0, byCarrier: {}, byStatus: {}, shipments: [] };
@@ -28,9 +32,14 @@ export function toArrivalEntry(s: Shipment & { originalPromisedDate: string }): 
   return { ...s, ...arrivalVariance(s.originalPromisedDate, s.actualArrivalDate!) };
 }
 
-export function supplierScorecard(entries: ArrivalLogEntry[]): SupplierScore[] {
+/**
+ * Per-supplier on-time stats. Arrivals dated only from the supplier's own ETA (`eta` source)
+ * say nothing about whether the supplier kept its promise, so they're left out unless asked for.
+ */
+export function supplierScorecard(entries: ArrivalLogEntry[], includeAssumed = false): SupplierScore[] {
   const bySupplier = new Map<string, ArrivalLogEntry[]>();
   for (const e of entries) {
+    if (!includeAssumed && e.arrivalSource === 'eta') continue;
     const list = bySupplier.get(e.supplier) ?? [];
     list.push(e);
     bySupplier.set(e.supplier, list);

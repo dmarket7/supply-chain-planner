@@ -23,7 +23,17 @@ shipmentsRoutes.get('/', async (c) => {
   if (to) filters.push(lte(expectedDate, to));
   if (q) {
     const like = `%${q}%`;
-    filters.push(or(ilike(shipments.trackingNumber, like), ilike(shipments.poNumber, like), ilike(suppliers.name, like))!);
+    filters.push(
+      or(
+        ilike(shipments.trackingNumber, like),
+        ilike(shipments.trackingRef, like),
+        ilike(shipments.poNumber, like),
+        ilike(shipments.asn, like),
+        ilike(shipments.partNumber, like),
+        ilike(shipments.customerPo, like),
+        ilike(suppliers.name, like),
+      )!,
+    );
   }
 
   const db = getDb(c.env.DATABASE_URL);
@@ -32,8 +42,8 @@ shipmentsRoutes.get('/', async (c) => {
     .from(shipments)
     .innerJoin(suppliers, eq(suppliers.id, shipments.supplierId))
     .where(and(...filters))
-    .orderBy(asc(expectedDate), asc(shipments.id))
-    .limit(2000);
+    .orderBy(sql`${expectedDate} asc nulls last`, asc(shipments.id))
+    .limit(10000);
   return c.json(rows);
 });
 
@@ -90,6 +100,8 @@ shipmentsRoutes.patch('/:id/arrival', async (c) => {
     .set({
       actualArrivalDate,
       arrivalSource: actualArrivalDate ? 'manual' : null,
+      arrivalWindowStart: null,
+      arrivalWindowEnd: null,
       status: actualArrivalDate ? 'delivered' : 'pending',
       updatedAt: new Date(),
     })

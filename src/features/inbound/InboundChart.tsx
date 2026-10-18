@@ -5,15 +5,15 @@ import { formatDate } from '../../lib/format';
 /** Fixed series so colors never shift when the date range changes. */
 const SERIES = [
   { key: 'parcel', label: 'Parcel', color: 'var(--series-1)' },
-  { key: 'ltl', label: 'LTL / freight', color: 'var(--series-2)' },
+  { key: 'freight', label: 'Freight / forwarder', color: 'var(--series-2)' },
   { key: 'unspecified', label: 'Unspecified', color: 'var(--series-3)' },
 ] as const;
 
-type Point = { date: string; total: number; parcel: number; ltl: number; unspecified: number };
+type Point = { date: string; total: number; parcel: number; freight: number; unspecified: number };
 
 function toPoints(days: InboundDay[]): Point[] {
   return days.map((d) => {
-    const p: Point = { date: d.date, total: d.total, parcel: 0, ltl: 0, unspecified: 0 };
+    const p: Point = { date: d.date, total: d.total, parcel: 0, freight: 0, unspecified: 0 };
     for (const s of d.shipments) p[s.mode ?? 'unspecified']++;
     return p;
   });

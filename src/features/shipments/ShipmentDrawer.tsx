@@ -4,7 +4,8 @@ import { todayIso } from '../../../shared/dates';
 import type { ShipmentDetail } from '../../../shared/types';
 import { ErrorNote, StatusBadge } from '../../components/ui';
 import { api } from '../../lib/api';
-import { STATUS_LABELS, formatDate } from '../../lib/format';
+import { ARRIVAL_SOURCE_LABELS, STATUS_LABELS, arrivalLabel, formatDate, poLineLabel } from '../../lib/format';
+import { ESTIMATED_ARRIVAL_SOURCES } from '../../../shared/types';
 
 export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -13,6 +14,9 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
     queryFn: () => api<ShipmentDetail>(`/shipments/${id}`),
   });
   const [arrival, setArrival] = useState(todayIso());
+  useEffect(() => {
+    if (data?.actualArrivalDate) setArrival(data.actualArrivalDate);
+  }, [data?.actualArrivalDate]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -42,7 +46,7 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
       >
         <div className="mb-4 flex items-start justify-between gap-2">
           <div>
-            <h2 className="font-semibold">{data?.trackingNumber ?? data?.poNumber ?? 'Shipment'}</h2>
+            <h2 className="font-semibold">{data ? poLineLabel(data) : 'Shipment'}</h2>
             {data && <p className="text-sm text-slate-500">{data.supplier}</p>}
           </div>
           <button onClick={onClose} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Close</button>
@@ -53,20 +57,40 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
           <div className="space-y-6">
             <dl className="divide-y divide-slate-100 dark:divide-slate-900">
               {row('Status', <StatusBadge status={data.status} />)}
-              {row('Carrier', data.carrier && `${data.carrier}${data.mode ? ` (${data.mode.toUpperCase()})` : ''}`)}
-              {row('Tracking #', data.trackingNumber && <span className="font-mono text-xs">{data.trackingNumber}</span>)}
-              {row('PO / line', [data.poNumber, data.lineRef].filter(Boolean).join(' / ') || null)}
+              {row('PO status', data.poStatus)}
+              {row('ASN / delivery', data.asn && <span className="font-mono text-xs">{data.asn}</span>)}
+              {row('Customer PO', data.customerPo)}
+              {row('Part', data.partNumber)}
               {row('Item', data.itemDescription)}
-              {row('Quantity', data.quantity)}
-              {row('Shipped', formatDate(data.shipDate))}
-              {row('Promised arrival', formatDate(data.promisedArrivalDate))}
+              {row('Commodity', data.commodity)}
+              {row('Quantity', data.quantity?.toLocaleString())}
+              {row('Warehouse', data.warehouse)}
+              {row('Carrier', data.carrier && `${data.carrier}${data.mode ? ` (${data.mode})` : ''}`)}
+              {row('Tracking #', data.trackingNumber && <span className="font-mono text-xs">{data.trackingNumber}</span>)}
+              {row('Tracking ref', data.trackingRef && <span className="font-mono text-xs">{data.trackingRef}</span>)}
+              {row('Customer request (CRD)', formatDate(data.requestDate))}
+              {row('Shipped (ETD)', formatDate(data.shipDate))}
+              {row('Supplier ETA', formatDate(data.promisedArrivalDate))}
               {row('Carrier ETA', formatDate(data.estimatedArrivalDate))}
-              {row('Arrived', data.actualArrivalDate ? `${formatDate(data.actualArrivalDate)} (${data.arrivalSource})` : null)}
+              {row(
+                'Arrived',
+                data.actualArrivalDate
+                  ? `${arrivalLabel(data)}${data.arrivalSource ? ` · ${ARRIVAL_SOURCE_LABELS[data.arrivalSource]}` : ''}`
+                  : null,
+              )}
             </dl>
 
             <section>
               <h3 className="mb-2 text-sm font-medium">Arrival</h3>
-              {data.actualArrivalDate ? (
+              {data.arrivalSource && ESTIMATED_ARRIVAL_SOURCES.includes(data.arrivalSource) && (
+                <p className="mb-2 text-sm text-slate-500">
+                  {data.arrivalSource === 'report_window'
+                    ? `Estimated: the line closed between the ${formatDate(data.arrivalWindowStart)} and ${formatDate(data.arrivalWindowEnd)} reports. `
+                    : 'Assumed on the supplier ETA: the line was already closed in the first report it appeared in. '}
+                  Tracking data or a confirmed date replaces this estimate.
+                </p>
+              )}
+              {data.actualArrivalDate && !(data.arrivalSource && ESTIMATED_ARRIVAL_SOURCES.includes(data.arrivalSource)) ? (
                 <button
                   onClick={() => setArrivalMutation.mutate(null)}
                   disabled={setArrivalMutation.isPending}
@@ -87,7 +111,7 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
                     disabled={!arrival || setArrivalMutation.isPending}
                     className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-slate-900"
                   >
-                    Mark arrived
+                    {data.actualArrivalDate ? 'Confirm arrival date' : 'Mark arrived'}
                   </button>
                 </div>
               )}

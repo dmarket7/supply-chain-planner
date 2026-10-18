@@ -1,10 +1,12 @@
-import { and, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
+import { ESTIMATED_ARRIVAL_SOURCES } from '../../shared/types';
 import type { Db } from '../db/client';
 import { shipments, trackingEvents } from '../db/schema';
 import type { TrackingProvider, TrackingRequest } from './provider';
 
 /**
- * Pulls tracking for open shipments and writes events, status, ETA and arrival date.
+ * Pulls tracking for shipments that haven't arrived, or whose arrival date is only an estimate
+ * from the report, and writes events, status, ETA and arrival date.
  * Shared by the API route and (later) a cron Worker.
  */
 export async function refreshTracking(db: Db, providers: TrackingProvider[], shipmentIds?: number[]) {
@@ -19,7 +21,7 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], shi
     .where(
       and(
         isNotNull(shipments.trackingNumber),
-        isNull(shipments.actualArrivalDate),
+        or(isNull(shipments.actualArrivalDate), inArray(shipments.arrivalSource, [...ESTIMATED_ARRIVAL_SOURCES])),
         shipmentIds?.length ? inArray(shipments.id, shipmentIds) : undefined,
       ),
     );
@@ -45,7 +47,9 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], shi
           .set({
             status: result.status,
             estimatedArrivalDate: result.estimatedArrivalDate ?? null,
-            ...(delivered ? { actualArrivalDate: delivered, arrivalSource: 'tracking' as const } : {}),
+            ...(delivered
+              ? { actualArrivalDate: delivered, arrivalSource: 'tracking' as const, arrivalWindowStart: null, arrivalWindowEnd: null }
+              : {}),
             lastTrackedAt: new Date(),
             updatedAt: new Date(),
           })

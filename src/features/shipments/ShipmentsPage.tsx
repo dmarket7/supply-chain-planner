@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { SHIPMENT_STATUSES, type Shipment, type ShipmentStatus } from '../../../shared/types';
 import { Card, Empty, ErrorNote, PageHeader, StatusBadge, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
-import { STATUS_LABELS, formatDate } from '../../lib/format';
+import { STATUS_LABELS, arrivalLabel, formatDate, poLineLabel } from '../../lib/format';
 import { ShipmentDrawer } from './ShipmentDrawer';
 
 export function ShipmentsPage() {
@@ -53,7 +53,7 @@ export function ShipmentsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tracking #, PO, supplier"
+              placeholder="Search tracking, PO, ASN, part, supplier"
               className="w-64 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
             />
             <select
@@ -96,19 +96,23 @@ export function ShipmentsPage() {
         ) : (
           <table className={tableCls}>
             <thead>
-              <tr>{['Status', 'Supplier', 'PO', 'Carrier', 'Tracking', 'Promised', 'ETA', 'Arrived'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
+              <tr>{['Status', 'Supplier', 'PO / line', 'ASN', 'Part', 'Carrier', 'Tracking', 'ETA', 'Arrived'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
             </thead>
             <tbody>
               {rows.map((s) => (
                 <tr key={s.id} onClick={() => setSelected(s.id)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900">
                   <td className={tdCls}><StatusBadge status={s.status} /></td>
                   <td className={tdCls}>{s.supplier}</td>
-                  <td className={tdCls}>{s.poNumber ?? '—'}</td>
+                  <td className={`${tdCls} whitespace-nowrap`}>{poLineLabel(s)}</td>
+                  <td className={`${tdCls} font-mono text-xs`}>{s.asn ?? '—'}</td>
+                  <td className={`${tdCls} text-xs`}>{s.partNumber ?? '—'}</td>
                   <td className={tdCls}>{s.carrier ?? '—'}</td>
                   <td className={`${tdCls} font-mono text-xs`}>{s.trackingNumber ?? '—'}</td>
-                  <td className={tdCls}>{formatDate(s.promisedArrivalDate)}</td>
-                  <td className={tdCls}>{formatDate(s.estimatedArrivalDate)}</td>
-                  <td className={tdCls}>{formatDate(s.actualArrivalDate)}</td>
+                  <td className={`${tdCls} whitespace-nowrap`}>{formatDate(s.estimatedArrivalDate ?? s.promisedArrivalDate)}</td>
+                  <td className={`${tdCls} whitespace-nowrap`}>
+                    {arrivalLabel(s)}
+                    {s.arrivalSource === 'report_window' || s.arrivalSource === 'eta' ? <span className="ml-1 text-xs text-slate-500">est.</span> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

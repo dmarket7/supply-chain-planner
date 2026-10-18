@@ -1,27 +1,28 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { dedupeKeysForFile } from '../shared/importKeys';
 import { guessMapping } from '../src/features/import/guessMapping';
-import { normalizeRow } from '../src/features/import/normalize';
+import { normalizeRow, reportDateFromFileName } from '../src/features/import/normalize';
 import { parseSheet, readWorkbook } from '../src/features/import/parseWorkbook';
 
-const path = 'samples/inbound-sample.xlsx';
+const file = existsSync('samples') ? readdirSync('samples').find((f) => /^Sample Inventory Report \d{8}\.xlsx$/.test(f)) : undefined;
 
-describe.runIf(existsSync(path))('generated sample report (npm run sample:xlsx)', () => {
-  it('parses, maps and normalizes end to end', () => {
-    const buf = readFileSync(path);
-    const sheet = parseSheet(readWorkbook(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)), 'Open POs');
-    const mapping = guessMapping(sheet.headers);
-    expect(mapping).toMatchObject({
-      supplier: 'Vendor',
-      poNumber: 'PO #',
-      carrier: 'Ship Via',
-      trackingNumber: 'Tracking #',
-      promisedArrivalDate: 'Promised Date',
-      actualArrivalDate: 'Date Received',
-    });
-    const rows = sheet.rows.map((r, i) => normalizeRow(r, mapping, i + 5));
-    const errors = rows.filter((r) => r.errors.length);
-    expect(errors.map((r) => r.errors)).toEqual([['Unreadable promised date "TBD"']]);
-    expect(rows.flatMap((r) => r.shipments)).toHaveLength(8); // 7 valid rows, one split into two shipments
+describe.runIf(file)('generated sample report (pnpm sample:xlsx)', () => {
+  it('parses, maps and normalizes the Supplier POs tab end to end', () => {
+    const buf = readFileSync(`samples/${file}`);
+    const wb = readWorkbook(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+    const sheet = parseSheet(wb, 'Supplier POs');
+    const reportDate = reportDateFromFileName(file!)!;
+    const rows = sheet.rows.map((r, i) => normalizeRow(r, guessMapping(sheet.headers), i + 2, { reportDate, closedWindowDays: 60 }));
+
+    expect(rows.filter((r) => r.errors.length)).toEqual([]);
+    expect(rows.filter((r) => r.skipped).map((r) => r.skipped)).toEqual([
+      'Closed line with ETA more than 60 days before the report',
+      'Closed line without an ETA',
+    ]);
+    const shipments = rows.flatMap((r) => (r.shipment ? [r.shipment] : []));
+    expect(shipments).toHaveLength(14);
+    expect(new Set(dedupeKeysForFile(shipments)).size).toBe(14);
+    expect(shipments.filter((s) => s.poStatus === 'open' && !s.asn && !s.promisedArrivalDate)).toHaveLength(2);
   });
 });

@@ -58,13 +58,26 @@ Or connect the GitHub repo in the Cloudflare dashboard with build command `pnpm 
 
 ## Importing reports
 
-- The header row is auto-detected, so title rows above it are fine.
-- Columns are auto-matched by name. Adjust any of them in the mapper. **Save the mapping** and it is reused automatically next time the same layout is uploaded.
-- Required: supplier, promised arrival date, and a tracking number or PO number.
-- A cell with several tracking numbers (comma, semicolon or newline separated) becomes one shipment per number.
-- UPS/FedEx/USPS/DHL are detected from the tracking number format when the carrier column is empty. Any other carrier name is treated as LTL/freight.
-- Re-importing updates existing shipments, matched by tracking number, or by supplier + PO + line when there is no tracking number. An arrival recorded manually or from tracking is never overwritten by a report.
-- Excel tip: format long tracking-number columns as **Text**. Excel stores 16+ digit numbers with lost precision, and the preview warns when this happens.
+The app is built around the Meerkat inventory report's **Supplier POs** tab, and still accepts other layouts through the column mapper.
+
+- **Upload weekly reports oldest first.** Each report is a snapshot. Arrival dates are inferred by comparing it with the previous one, so the API refuses a report older than the latest import.
+- The **report date** comes from the file name (`… 20261010.xlsx`). It can be changed before importing.
+- The Supplier POs tab is picked automatically and its columns are auto-matched (WintecPO, WintecPOLine, ASN, POStatus, Tracking Num, ETADate, ETDDate, CRD, …). You can adjust the mapping and save it for next time.
+- **One shipment = PO + line + ASN.** A PO line can ship in several deliveries, and one tracking number can cover several lines. If the same key appears twice in one file (e.g. a delivery split by country of origin), the rows are numbered `#2`, `#3`.
+- **What gets imported:** every Open line, plus Closed lines whose ETA is within the last 60 days (the window can be changed). Older or undated Closed lines are skipped.
+- **Statuses from the report:** Open with no ASN/tracking/ETA → *Awaiting shipment*; Open with an ETA → *Pending*; Open with ASN or tracking → *In transit*; Closed → *Delivered*. Awaiting lines that drop out of a later report (shipped under an ASN, or cancelled) are removed.
+- **Tracking cells:** `HKG…/IS…` pairs are split into a tracking number + reference. "Truck" becomes the carrier. Carriers are detected because the report's Carrier column is empty: UPS `1Z…`, FedEx 12 digits, DHL 10 digits, air waybills `297-12345678` (airline from the prefix), forwarder house bills `HKG…`/`LAX…`. Other formats show as Unknown.
+- The whole original row is stored with each line (`source_row`), so unmapped columns can be used later.
+
+### Arrival dates
+
+There is no receipt-date column, so the actual arrival date comes from the best evidence available:
+
+1. **Tracking** (once a provider is connected) or a date **entered by hand**. These are confirmed and never overwritten by a report.
+2. **Between reports:** the line was Open in one report and Closed in the next, so it arrived in that window. The estimate is the supplier's ETA moved into the window: ETA before it → the window's first day (late); ETA after it → the report date (early).
+3. **Assumed on ETA:** the line was already Closed the first time it was imported. This says nothing about punctuality, so these lines are left out of the supplier scorecard unless "Include ETA-assumed arrivals" is ticked.
+
+On-time performance is measured against the **first ETA** the supplier gave. Later ETA changes are logged as slips.
 
 ## Adding carrier tracking
 

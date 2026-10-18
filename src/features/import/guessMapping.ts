@@ -3,30 +3,50 @@ import type { ColumnMapping, TargetField } from '../../../shared/types';
 export const FIELD_LABELS: Record<TargetField, string> = {
   supplier: 'Supplier',
   poNumber: 'PO number',
-  lineRef: 'PO line / reference',
-  itemDescription: 'Item description',
-  quantity: 'Quantity',
+  lineRef: 'PO line',
+  asn: 'ASN / delivery number',
+  poStatus: 'PO status (open / closed)',
+  trackingNumber: 'Tracking number',
   carrier: 'Carrier',
-  trackingNumber: 'Tracking / PRO number',
-  shipDate: 'Ship date',
-  promisedArrivalDate: 'Promised arrival date',
+  promisedArrivalDate: 'ETA (supplier promised arrival)',
+  shipDate: 'Ship date (ETD)',
+  requestDate: 'Customer request date (CRD)',
   actualArrivalDate: 'Actual arrival date',
+  customerPo: 'Customer PO',
+  partNumber: 'Part number',
+  itemDescription: 'Item description',
+  commodity: 'Commodity',
+  warehouse: 'Warehouse',
+  quantity: 'Quantity',
 };
 
-export const REQUIRED_FIELDS: TargetField[] = ['supplier', 'promisedArrivalDate'];
+export const REQUIRED_FIELDS: TargetField[] = ['supplier'];
 
-/** Normalized header synonyms, most specific first. Tune once the real report is available. */
+/** Columns that matter most for the report; shown first in the mapper. */
+export const PRIMARY_FIELDS: TargetField[] = ['supplier', 'poNumber', 'lineRef', 'asn', 'poStatus', 'trackingNumber', 'carrier', 'promisedArrivalDate', 'shipDate'];
+
+/**
+ * Normalized header synonyms, most specific first. Includes the Meerkat "Supplier POs" headers
+ * (WintecPO, WintecPOLine, ETADate, ETDDate, CRD, Tracking Num, …).
+ */
 const SYNONYMS: Record<TargetField, string[]> = {
-  supplier: ['supplier', 'suppliername', 'vendor', 'vendorname', 'shipper', 'manufacturer'],
-  poNumber: ['ponumber', 'po', 'pono', 'purchaseorder', 'purchaseordernumber', 'order', 'ordernumber'],
-  lineRef: ['poline', 'line', 'lineno', 'linenumber', 'reference', 'ref'],
-  itemDescription: ['itemdescription', 'description', 'item', 'part', 'partnumber', 'sku', 'material'],
-  quantity: ['quantity', 'qty', 'qtyshipped', 'units', 'cartons'],
-  carrier: ['carrier', 'carriername', 'shipvia', 'via', 'freightcarrier', 'scac'],
-  trackingNumber: ['trackingnumber', 'tracking', 'trackingno', 'trackingid', 'pro', 'pronumber', 'prono', 'bol', 'waybill', 'awb'],
-  shipDate: ['shipdate', 'shipped', 'dateshipped', 'shippeddate', 'pickupdate'],
-  promisedArrivalDate: ['promisedarrivaldate', 'promiseddate', 'promised', 'eta', 'estimatedarrival', 'expecteddate', 'expectedarrival', 'duedate', 'deliverydate', 'arrivaldate', 'needby'],
-  actualArrivalDate: ['actualarrivaldate', 'actualarrival', 'receiveddate', 'datereceived', 'received', 'delivereddate'],
+  supplier: ['suppliername', 'supplier', 'vendorname', 'vendor', 'shipper', 'manufacturer'],
+  poNumber: ['wintecpo', 'ponumber', 'po', 'pono', 'purchaseorder', 'purchaseordernumber', 'ordernumber'],
+  lineRef: ['wintecpoline', 'poline', 'line', 'lineno', 'linenumber'],
+  asn: ['asn', 'asnnumber', 'deliverynumber', 'delivery', 'packslipid', 'packingslip'],
+  poStatus: ['postatus', 'status', 'linestatus', 'orderstatus'],
+  trackingNumber: ['trackingnum', 'trackingnumber', 'tracking', 'trackingno', 'trackingid', 'pro', 'pronumber', 'prono', 'bol', 'waybill', 'awb'],
+  carrier: ['carrier', 'carriername', 'shipvia', 'via', 'freightcarrier', 'forwarder', 'scac'],
+  promisedArrivalDate: ['etadate', 'eta', 'promisedarrivaldate', 'promiseddate', 'promised', 'estimatedarrival', 'expecteddate', 'expectedarrival', 'duedate', 'deliverydate', 'arrivaldate', 'needby'],
+  shipDate: ['etddate', 'etd', 'shipdate', 'shipped', 'dateshipped', 'shippeddate', 'pickupdate'],
+  requestDate: ['crd', 'requestdate', 'customerrequestdate', 'requestedshipdate'],
+  actualArrivalDate: ['actualarrivaldate', 'actualarrival', 'receiveddate', 'datereceived', 'received', 'delivereddate', 'receiptdate'],
+  customerPo: ['metapo', 'customerpo', 'custpo'],
+  partNumber: ['wintecpn', 'partnumber', 'pn', 'sku', 'itemnumber'],
+  itemDescription: ['description', 'itemdescription', 'item', 'material'],
+  commodity: ['commodity', 'category'],
+  warehouse: ['warehouselocation', 'warehouse', 'shipto', 'location'],
+  quantity: ['poorderqty', 'quantity', 'qty', 'orderqty', 'qtyshipped', 'units'],
 };
 
 const norm = (s: string) => s.toLowerCase().replace(/#/g, 'number').replace(/[^a-z0-9]/g, '');

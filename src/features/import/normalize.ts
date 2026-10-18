@@ -1,26 +1,60 @@
 import * as XLSX from 'xlsx';
 import { getTracking } from 'ts-tracking-number';
-import type { ColumnMapping, ShipmentInput, ShipmentMode } from '../../../shared/types';
+import { addDays } from '../../../shared/dates';
+import type { ColumnMapping, PoStatus, ShipmentInput, ShipmentMode } from '../../../shared/types';
 import type { Cell } from './parseWorkbook';
+
+export interface NormalizeOptions {
+  /** YYYY-MM-DD the report was run. */
+  reportDate: string;
+  /** Closed lines are imported only when their ETA is within this many days before the report date. */
+  closedWindowDays: number;
+}
 
 export interface NormalizedRow {
   /** 1-based spreadsheet row number, for showing errors to the user. */
   rowNumber: number;
-  /** One shipment per tracking number in the row (empty when the row has errors). */
-  shipments: ShipmentInput[];
+  shipment: ShipmentInput | null;
+  /** Set when a valid row is intentionally left out (e.g. a line that closed long ago). */
+  skipped: string | null;
   errors: string[];
   warnings: string[];
 }
 
-const PARCEL_CARRIERS: [RegExp, string][] = [
-  [/^(ups|united parcel)/i, 'UPS'],
-  [/^(fedex|fed ex|federal express)/i, 'FedEx'],
-  [/^(usps|us postal|u\.s\. postal|united states postal|postal service)/i, 'USPS'],
-  [/^dhl/i, 'DHL'],
-  [/^ontrac/i, 'OnTrac'],
-  [/^amazon/i, 'Amazon'],
+const NAMED_CARRIERS: [RegExp, string, ShipmentMode][] = [
+  [/^(ups|united parcel)/i, 'UPS', 'parcel'],
+  [/^(fedex|fed ex|federal express)/i, 'FedEx', 'parcel'],
+  [/^(usps|us postal|u\.s\. postal|united states postal|postal service)/i, 'USPS', 'parcel'],
+  [/^dhl/i, 'DHL', 'parcel'],
+  [/^ontrac/i, 'OnTrac', 'parcel'],
+  [/^amazon/i, 'Amazon', 'parcel'],
+  [/^dsv/i, 'DSV', 'freight'],
+  [/^(k\s*&\s*n|k\+n|kuehne)/i, 'Kuehne+Nagel', 'freight'],
 ];
-const PARCEL_NAMES = new Set(PARCEL_CARRIERS.map(([, n]) => n));
+
+/** IATA airline prefixes seen on air waybills ("297-73979334"). Unknown prefixes show as "Air cargo". */
+const AIRLINE_PREFIXES: Record<string, string> = {
+  '001': 'American Airlines Cargo',
+  '006': 'Delta Cargo',
+  '016': 'United Cargo',
+  '020': 'Lufthansa Cargo',
+  '023': 'FedEx (air)',
+  '057': 'Air France Cargo',
+  '074': 'KLM Cargo',
+  '112': 'China Cargo Airlines',
+  '160': 'Cathay Cargo',
+  '172': 'Cargolux',
+  '176': 'Emirates SkyCargo',
+  '180': 'Korean Air Cargo',
+  '297': 'China Airlines Cargo',
+  '369': 'Atlas Air',
+  '406': 'UPS (air)',
+  '618': 'Singapore Airlines Cargo',
+  '695': 'EVA Air Cargo',
+  '784': 'China Southern Cargo',
+  '988': 'Asiana Cargo',
+  '999': 'Air China Cargo',
+};
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
@@ -53,101 +87,184 @@ export function toIsoDate(value: Cell): string | null {
   return null;
 }
 
+/** Report date from a file name like "… Report 20261010.xlsx", or null. */
+export function reportDateFromFileName(name: string): string | null {
+  const m = name.match(/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})/);
+  return m ? iso(+m[1], +m[2], +m[3]) : null;
+}
+
 function text(value: Cell): string | null {
   if (value === null) return null;
   const s = String(value).trim();
   return s === '' ? null : s;
 }
 
-/** Splits a cell that may hold several tracking numbers ("1Z..., 1Z..." or one per line). */
-export function splitTrackingNumbers(value: Cell): string[] {
+export function normalizePoStatus(value: Cell): PoStatus | null {
+  const s = text(value)?.toLowerCase();
+  if (!s) return null;
+  if (s.startsWith('open')) return 'open';
+  if (s.startsWith('clos') || s === 'received' || s === 'complete' || s === 'completed') return 'closed';
+  return null;
+}
+
+export interface ParsedTracking {
+  trackingNumber: string | null;
+  trackingRef: string | null;
+  /** A carrier/mode word typed where a tracking number belongs, e.g. "Truck". */
+  placeholder: string | null;
+}
+
+/**
+ * Splits a tracking cell into the number to track and any secondary reference:
+ * "HKG19921086/IS20260944701" -> HKG19921086 + ref IS20260944701; "Truck" -> placeholder.
+ */
+export function parseTrackingCell(value: Cell): ParsedTracking {
   const s = text(value);
-  if (!s) return [];
-  return s
-    .split(/[,;|\n\r]+/)
-    .map((t) => t.replace(/[\s-]+/g, '').toUpperCase())
-    .filter(Boolean);
+  if (!s) return { trackingNumber: null, trackingRef: null, placeholder: null };
+  if (!/\d/.test(s)) return { trackingNumber: null, trackingRef: null, placeholder: s };
+
+  const parts = s
+    .split(/[/,;|\n\r]+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(cleanTrackingNumber);
+  const [first, ...rest] = parts;
+  return { trackingNumber: first ?? null, trackingRef: rest.length ? rest.join(' / ') : null, placeholder: null };
 }
 
-export function normalizeCarrier(name: string | null): { carrier: string | null; mode: ShipmentMode | null } {
-  if (!name) return { carrier: null, mode: null };
-  for (const [re, canonical] of PARCEL_CARRIERS) {
-    if (re.test(name.trim())) return { carrier: canonical, mode: 'parcel' };
+function cleanTrackingNumber(raw: string): string {
+  const upper = raw.toUpperCase().replace(/\s+/g, ' ');
+  const awb = upper.match(/^(\d{3})[\s-]?(\d{8})$/);
+  if (awb) return `${awb[1]}-${awb[2]}`;
+  return upper.replace(/[\s-]+/g, '');
+}
+
+export interface CarrierGuess {
+  carrier: string | null;
+  mode: ShipmentMode | null;
+  /** False when the guess is based on length/shape only (no check digit). */
+  confident: boolean;
+}
+
+export function normalizeCarrier(name: string | null): CarrierGuess {
+  if (!name) return { carrier: null, mode: null, confident: false };
+  for (const [re, canonical, mode] of NAMED_CARRIERS) {
+    if (re.test(name.trim())) return { carrier: canonical, mode, confident: true };
   }
-  // Anything else named in the report is assumed to be a freight/LTL carrier.
-  return { carrier: name.trim(), mode: 'ltl' };
+  // Any other named carrier is assumed to be a freight carrier or forwarder.
+  return { carrier: name.trim(), mode: 'freight', confident: true };
 }
 
-/** Parcel carrier inferred from the tracking number's format and check digit. */
-export function detectCarrier(trackingNumber: string): string | null {
-  const code = getTracking(trackingNumber)?.courier.code;
+/** Carrier inferred from a tracking number's format. */
+export function detectCarrier(trackingNumber: string): CarrierGuess {
   const byCode: Record<string, string> = { ups: 'UPS', fedex: 'FedEx', usps: 'USPS', dhl: 'DHL', ontrac: 'OnTrac', amazon: 'Amazon' };
-  return code ? (byCode[code] ?? null) : null;
+  const code = getTracking(trackingNumber)?.courier.code;
+  if (code && byCode[code]) return { carrier: byCode[code], mode: 'parcel', confident: true };
+
+  const awb = trackingNumber.match(/^(\d{3})-\d{8}$/);
+  if (awb) return { carrier: AIRLINE_PREFIXES[awb[1]] ?? 'Air cargo', mode: 'freight', confident: !!AIRLINE_PREFIXES[awb[1]] };
+  if (/^\d{12}$/.test(trackingNumber)) return { carrier: 'FedEx', mode: 'parcel', confident: false };
+  if (/^\d{10}$/.test(trackingNumber)) return { carrier: 'DHL', mode: 'parcel', confident: false };
+  // House bills from forwarders usually start with an origin airport code: HKG…, LAX…, TPE…
+  if (/^[A-Z]{3}\d{6,}$/.test(trackingNumber)) return { carrier: 'Forwarder', mode: 'freight', confident: false };
+  return { carrier: null, mode: null, confident: false };
 }
 
-export function normalizeRow(raw: Record<string, Cell>, mapping: ColumnMapping, rowNumber: number): NormalizedRow {
+export function normalizeRow(
+  raw: Record<string, Cell>,
+  mapping: ColumnMapping,
+  rowNumber: number,
+  options: NormalizeOptions,
+): NormalizedRow {
   const get = (f: keyof ColumnMapping) => (mapping[f] ? (raw[mapping[f]!] ?? null) : null);
   const errors: string[] = [];
   const warnings: string[] = [];
+  const result = (shipment: ShipmentInput | null, skipped: string | null = null): NormalizedRow => ({
+    rowNumber,
+    shipment,
+    skipped,
+    errors,
+    warnings,
+  });
 
   const supplier = text(get('supplier'));
   if (!supplier) errors.push('Missing supplier');
 
-  const promisedRaw = get('promisedArrivalDate');
-  const promisedArrivalDate = toIsoDate(promisedRaw);
-  if (!promisedArrivalDate) {
-    errors.push(promisedRaw === null ? 'Missing promised arrival date' : `Unreadable promised date "${promisedRaw}"`);
-  }
+  const poStatus = normalizePoStatus(get('poStatus'));
+  if (mapping.poStatus && text(get('poStatus')) && !poStatus) warnings.push(`Unrecognized PO status "${get('poStatus')}"`);
 
-  const dateField = (f: 'shipDate' | 'actualArrivalDate', label: string) => {
+  const dateField = (f: 'promisedArrivalDate' | 'shipDate' | 'requestDate' | 'actualArrivalDate', label: string) => {
     const v = get(f);
     const d = toIsoDate(v);
     if (v !== null && text(v) && !d) warnings.push(`Ignored unreadable ${label} "${v}"`);
     return d;
   };
+  let promisedArrivalDate = dateField('promisedArrivalDate', 'ETA');
   const shipDate = dateField('shipDate', 'ship date');
+  const requestDate = dateField('requestDate', 'request date');
   const actualArrivalDate = dateField('actualArrivalDate', 'arrival date');
+
+  if (promisedArrivalDate && promisedArrivalDate < addDays(options.reportDate, -3 * 365)) {
+    warnings.push(`Ignored ETA ${promisedArrivalDate}: more than 3 years before the report`);
+    promisedArrivalDate = null;
+  }
+  if (promisedArrivalDate && shipDate && promisedArrivalDate < shipDate) {
+    warnings.push('ETA is before the ship date');
+  }
+  // Without a PO status column (generic reports) every row needs an ETA to place it on the calendar.
+  if (!mapping.poStatus && !promisedArrivalDate) errors.push('Missing ETA / promised arrival date');
 
   const trackingCell = get('trackingNumber');
   if (typeof trackingCell === 'number' && trackingCell >= 1e15) {
     warnings.push('Tracking number is stored as a number in Excel and may have lost digits; format that column as Text');
   }
-  const trackingNumbers = splitTrackingNumbers(trackingCell);
+  const tracking = parseTrackingCell(trackingCell);
   const poNumber = text(get('poNumber'));
-  if (!trackingNumbers.length && !poNumber) errors.push('Needs a tracking number or a PO number');
+  if (!tracking.trackingNumber && !poNumber) errors.push('Needs a tracking number or a PO number');
 
   const qtyRaw = get('quantity');
   const quantity = qtyRaw === null || qtyRaw === '' ? null : Number(qtyRaw);
   if (quantity !== null && Number.isNaN(quantity)) warnings.push(`Ignored non-numeric quantity "${qtyRaw}"`);
 
-  if (errors.length) return { rowNumber, shipments: [], errors, warnings };
+  if (errors.length) return result(null);
 
-  const listed = normalizeCarrier(text(get('carrier')));
-  const base = {
+  if (poStatus === 'closed') {
+    if (!promisedArrivalDate) return result(null, 'Closed line without an ETA');
+    if (promisedArrivalDate < addDays(options.reportDate, -options.closedWindowDays)) {
+      return result(null, `Closed line with ETA more than ${options.closedWindowDays} days before the report`);
+    }
+  }
+
+  let guess = normalizeCarrier(text(get('carrier')));
+  if (!guess.carrier && tracking.placeholder) guess = normalizeCarrier(tracking.placeholder);
+  if (tracking.trackingNumber) {
+    const detected = detectCarrier(tracking.trackingNumber);
+    if (!guess.carrier) guess = detected;
+    else if (detected.confident && detected.carrier !== guess.carrier && guess.mode === 'parcel') {
+      warnings.push(`${tracking.trackingNumber} looks like ${detected.carrier} but the report says ${guess.carrier}`);
+    }
+  }
+
+  return result({
     supplier: supplier!,
     poNumber,
     lineRef: text(get('lineRef')),
+    asn: text(get('asn')),
+    poStatus,
+    customerPo: text(get('customerPo')),
+    partNumber: text(get('partNumber')),
     itemDescription: text(get('itemDescription')),
+    commodity: text(get('commodity')),
+    warehouse: text(get('warehouse')),
     quantity: quantity !== null && !Number.isNaN(quantity) ? quantity : null,
+    carrier: guess.carrier,
+    mode: guess.mode,
+    trackingNumber: tracking.trackingNumber,
+    trackingRef: tracking.trackingRef,
+    requestDate,
     shipDate,
-    promisedArrivalDate: promisedArrivalDate!,
+    promisedArrivalDate,
     actualArrivalDate,
-  };
-
-  const shipments: ShipmentInput[] = (trackingNumbers.length ? trackingNumbers : [null]).map((tn) => {
-    let { carrier, mode } = listed;
-    if (tn) {
-      const detected = detectCarrier(tn);
-      if (!carrier && detected) {
-        carrier = detected;
-        mode = 'parcel';
-      } else if (carrier && detected && PARCEL_NAMES.has(carrier) && detected !== carrier) {
-        warnings.push(`${tn} looks like ${detected} but the report says ${carrier}`);
-      }
-    }
-    return { ...base, trackingNumber: tn, carrier, mode };
+    sourceRow: raw,
   });
-  if (trackingNumbers.length > 1) warnings.push(`Split into ${trackingNumbers.length} shipments (one per tracking number)`);
-
-  return { rowNumber, shipments, errors, warnings };
 }

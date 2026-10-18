@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const SHIPMENT_STATUSES = [
+  'awaiting_shipment',
   'pending',
   'in_transit',
   'out_for_delivery',
@@ -10,43 +11,84 @@ export const SHIPMENT_STATUSES = [
 ] as const;
 export type ShipmentStatus = (typeof SHIPMENT_STATUSES)[number];
 
-export const SHIPMENT_MODES = ['parcel', 'ltl'] as const;
+export const SHIPMENT_MODES = ['parcel', 'freight'] as const;
 export type ShipmentMode = (typeof SHIPMENT_MODES)[number];
+
+/**
+ * Where an actual arrival date came from. `tracking` and `manual` are confirmed;
+ * `report_window` and `eta` are estimates that tracking data replaces when it arrives.
+ */
+export const ARRIVAL_SOURCES = ['manual', 'tracking', 'import', 'report_window', 'eta'] as const;
+export type ArrivalSource = (typeof ARRIVAL_SOURCES)[number];
+export const ESTIMATED_ARRIVAL_SOURCES: readonly ArrivalSource[] = ['report_window', 'eta'];
+
+export const PO_STATUSES = ['open', 'closed'] as const;
+export type PoStatus = (typeof PO_STATUSES)[number];
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
 
-/** One normalized row from an uploaded report, as sent to POST /api/imports. */
-export const shipmentInputSchema = z
-  .object({
+const shipmentFields = z.object({
     supplier: z.string().min(1),
     poNumber: z.string().nullish(),
     lineRef: z.string().nullish(),
+    /** Delivery / ASN number. One PO line can ship in several deliveries. */
+    asn: z.string().nullish(),
+    poStatus: z.enum(PO_STATUSES).nullish(),
+    customerPo: z.string().nullish(),
+    partNumber: z.string().nullish(),
     itemDescription: z.string().nullish(),
+    commodity: z.string().nullish(),
+    warehouse: z.string().nullish(),
     quantity: z.number().nullish(),
     carrier: z.string().nullish(),
     mode: z.enum(SHIPMENT_MODES).nullish(),
     trackingNumber: z.string().nullish(),
+    /** Secondary reference that came in the tracking cell (e.g. the "IS…" half of "HKG…/IS…"). */
+    trackingRef: z.string().nullish(),
+    requestDate: isoDate.nullish(),
     shipDate: isoDate.nullish(),
-    promisedArrivalDate: isoDate,
+    promisedArrivalDate: isoDate.nullish(),
     actualArrivalDate: isoDate.nullish(),
-  })
-  .refine((r) => r.trackingNumber || r.poNumber, {
-    message: 'Row needs a tracking number or a PO number',
-  });
+    /** The original spreadsheet row, kept so other columns can be used later. */
+    sourceRow: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).nullish(),
+});
+const needsIdentity = [
+  (r: { trackingNumber?: string | null; poNumber?: string | null }) => !!(r.trackingNumber || r.poNumber),
+  { message: 'Row needs a tracking number or a PO number' },
+] as const;
+
+/** One normalized PO line / delivery from an uploaded report. */
+export const shipmentInputSchema = shipmentFields.refine(...needsIdentity);
 export type ShipmentInput = z.infer<typeof shipmentInputSchema>;
 
-export const importRequestSchema = z.object({
+/** A row as uploaded: the shipment plus its key, computed over the whole file (see importKeys.ts). */
+export const importRowSchema = shipmentFields.extend({ dedupeKey: z.string().min(1).max(400) }).refine(...needsIdentity);
+
+export const startImportSchema = z.object({
   fileName: z.string().min(1),
+  sheetName: z.string().nullish(),
+  /** Date the report was run; used to infer arrival windows between uploads. */
+  reportDate: isoDate,
   mappingId: z.number().int().nullish(),
-  rows: z.array(shipmentInputSchema).min(1).max(5000),
+  rowCount: z.number().int().nonnegative(),
 });
-export type ImportRequest = z.infer<typeof importRequestSchema>;
+export type StartImportRequest = z.infer<typeof startImportSchema>;
+
+// Small enough that parsing + validating a chunk stays inside the Workers free-plan CPU budget.
+export const IMPORT_CHUNK_SIZE = 200;
+export const importRowsSchema = z.object({
+  rows: z.array(importRowSchema).min(1).max(IMPORT_CHUNK_SIZE),
+});
 
 export interface ImportResult {
   importId: number;
   inserted: number;
   updated: number;
   promisedDateChanges: number;
+  /** Lines that went from Open to Closed since an earlier report. */
+  newlyClosed: number;
+  /** "Awaiting shipment" lines from earlier reports that are no longer in this one. */
+  removedAwaiting: number;
 }
 
 /** Target fields a spreadsheet column can be mapped to. */
@@ -54,13 +96,20 @@ export const TARGET_FIELDS = [
   'supplier',
   'poNumber',
   'lineRef',
-  'itemDescription',
-  'quantity',
-  'carrier',
+  'asn',
+  'poStatus',
   'trackingNumber',
-  'shipDate',
+  'carrier',
   'promisedArrivalDate',
+  'shipDate',
+  'requestDate',
   'actualArrivalDate',
+  'customerPo',
+  'partNumber',
+  'itemDescription',
+  'commodity',
+  'warehouse',
+  'quantity',
 ] as const;
 export type TargetField = (typeof TARGET_FIELDS)[number];
 
@@ -79,16 +128,27 @@ export interface Shipment {
   supplier: string;
   poNumber: string | null;
   lineRef: string | null;
+  asn: string | null;
+  poStatus: PoStatus | null;
+  customerPo: string | null;
+  partNumber: string | null;
   itemDescription: string | null;
+  commodity: string | null;
+  warehouse: string | null;
   quantity: number | null;
   carrier: string | null;
   mode: ShipmentMode | null;
   trackingNumber: string | null;
+  trackingRef: string | null;
+  requestDate: string | null;
   shipDate: string | null;
-  promisedArrivalDate: string;
+  promisedArrivalDate: string | null;
   estimatedArrivalDate: string | null;
   actualArrivalDate: string | null;
-  arrivalSource: 'manual' | 'tracking' | 'import' | null;
+  arrivalSource: ArrivalSource | null;
+  /** For `report_window` arrivals: the line arrived within [start, end]. */
+  arrivalWindowStart: string | null;
+  arrivalWindowEnd: string | null;
   status: ShipmentStatus;
   lastTrackedAt: string | null;
 }

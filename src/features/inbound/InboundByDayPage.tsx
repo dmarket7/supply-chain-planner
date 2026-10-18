@@ -4,7 +4,7 @@ import { addDays, todayIso } from '../../../shared/dates';
 import type { InboundDay } from '../../../shared/types';
 import { Card, DateInput, Empty, ErrorNote, PageHeader, StatTile, StatusBadge, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
-import { formatDate } from '../../lib/format';
+import { formatDate, poLineLabel } from '../../lib/format';
 import { ShipmentDrawer } from '../shipments/ShipmentDrawer';
 import { InboundChart } from './InboundChart';
 
@@ -36,7 +36,7 @@ export function InboundByDayPage() {
     <div className="space-y-6">
       <PageHeader
         title="Inbound by day"
-        description="Shipments grouped by expected arrival (carrier ETA when known, otherwise the supplier's promised date)."
+        description="PO lines grouped by expected arrival (carrier ETA when known, otherwise the supplier's ETA). Lines awaiting shipment have no date yet and are listed on the Shipments page."
         actions={
           <>
             <DateInput label="From" value={from} onChange={setFrom} />
@@ -78,7 +78,7 @@ export function InboundByDayPage() {
                   {formatDate(d.date, { weekday: 'short' })}
                   {d.date === today && ' · Today'}
                 </span>
-                <span className="text-sm tabular-nums text-slate-500">{d.total} shipments</span>
+                <span className="text-sm tabular-nums text-slate-500">{d.total} lines</span>
                 <span className="text-sm text-slate-500">
                   {Object.entries(d.byCarrier)
                     .sort((a, b) => b[1] - a[1])
@@ -91,16 +91,18 @@ export function InboundByDayPage() {
                 <div className="overflow-x-auto border-t border-slate-200 dark:border-slate-800">
                   <table className={tableCls}>
                     <thead>
-                      <tr>{['Supplier', 'PO', 'Carrier', 'Tracking', 'Promised', 'Status'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
+                      <tr>{['Supplier', 'PO / line', 'ASN', 'Part', 'Qty', 'Carrier', 'Tracking', 'Status'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
                       {d.shipments.map((s) => (
                         <tr key={s.id} onClick={() => setSelected(s.id)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900">
                           <td className={tdCls}>{s.supplier}</td>
-                          <td className={tdCls}>{s.poNumber ?? '—'}</td>
+                          <td className={`${tdCls} whitespace-nowrap`}>{poLineLabel(s)}</td>
+                          <td className={`${tdCls} font-mono text-xs`}>{s.asn ?? '—'}</td>
+                          <td className={`${tdCls} text-xs`}>{s.partNumber ?? '—'}</td>
+                          <td className={`${tdCls} tabular-nums`}>{s.quantity?.toLocaleString() ?? '—'}</td>
                           <td className={tdCls}>{s.carrier ?? '—'}</td>
                           <td className={`${tdCls} font-mono text-xs`}>{s.trackingNumber ?? '—'}</td>
-                          <td className={tdCls}>{formatDate(s.promisedArrivalDate)}</td>
                           <td className={tdCls}><StatusBadge status={s.status} /></td>
                         </tr>
                       ))}

@@ -4,7 +4,7 @@ import { addDays, todayIso } from '../../../shared/dates';
 import type { ArrivalsResponse } from '../../../shared/types';
 import { Card, DateInput, Empty, ErrorNote, PageHeader, StatTile, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
-import { formatDate, varianceLabel } from '../../lib/format';
+import { ARRIVAL_SOURCE_LABELS, arrivalLabel, formatDate, poLineLabel, varianceLabel } from '../../lib/format';
 import { ShipmentDrawer } from '../shipments/ShipmentDrawer';
 
 function VarianceCell({ days }: { days: number }) {
@@ -21,13 +21,20 @@ export function ArrivalLogPage() {
   const [from, setFrom] = useState(addDays(todayIso(), -90));
   const [to, setTo] = useState(todayIso());
   const [supplier, setSupplier] = useState('');
+  const [includeAssumed, setIncludeAssumed] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['arrivals', from, to, supplier],
-    queryFn: () => api<ArrivalsResponse>(`/reports/arrivals${qs({ from, to, supplier: supplier || undefined })}`),
+    queryKey: ['arrivals', from, to, supplier, includeAssumed],
+    queryFn: () =>
+      api<ArrivalsResponse>(
+        `/reports/arrivals${qs({ from, to, supplier: supplier || undefined, includeAssumed: includeAssumed ? '1' : undefined })}`,
+      ),
   });
-  const entries = data?.entries ?? [];
+  const allEntries = data?.entries ?? [];
+  const assumedCount = allEntries.filter((e) => e.arrivalSource === 'eta').length;
+  // Headline stats follow the same rule as the scorecard.
+  const entries = includeAssumed ? allEntries : allEntries.filter((e) => e.arrivalSource !== 'eta');
   const onTime = entries.filter((e) => e.onTime).length;
   const late = entries.filter((e) => !e.onTime);
   const avgLate = late.length ? late.reduce((n, e) => n + e.varianceDays, 0) / late.length : 0;
@@ -36,11 +43,18 @@ export function ArrivalLogPage() {
     <div className="space-y-6">
       <PageHeader
         title="Arrival log"
-        description="Actual arrival compared with the date the supplier first promised."
+        description="Arrival compared with the first ETA the supplier gave. Arrivals marked est. are inferred from when the line closed between two reports."
         actions={
           <>
             <DateInput label="Arrived from" value={from} onChange={setFrom} />
             <DateInput label="To" value={to} onChange={setTo} />
+            <label
+              className="flex items-center gap-2 pb-1.5 text-sm"
+              title="Lines already closed the first time they were imported have their arrival assumed to be the supplier ETA, so they always look on time."
+            >
+              <input type="checkbox" checked={includeAssumed} onChange={(e) => setIncludeAssumed(e.target.checked)} />
+              Include ETA-assumed arrivals{assumedCount > 0 && ` (${assumedCount})`}
+            </label>
             {supplier && (
               <button onClick={() => setSupplier('')} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700">
                 {supplier} ✕
@@ -93,19 +107,24 @@ export function ArrivalLogPage() {
         <h2 className="px-4 pt-4 font-medium">Arrivals{supplier && ` · ${supplier}`}</h2>
         {isLoading ? (
           <div className="p-6 text-sm text-slate-500">Loading…</div>
-        ) : entries.length === 0 ? (
+        ) : allEntries.length === 0 ? (
           <div className="p-4"><Empty>No arrivals recorded in this range. Mark shipments as arrived from the Shipments or Inbound pages.</Empty></div>
         ) : (
           <table className={tableCls}>
             <thead>
-              <tr>{['Arrived', 'Supplier', 'PO', 'Carrier', 'Tracking', 'Promised', 'Variance', 'Source'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
+              <tr>{['Arrived', 'Supplier', 'PO / line', 'ASN', 'Carrier', 'Tracking', 'Supplier ETA', 'Variance', 'Basis'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {[...entries].reverse().map((e) => (
-                <tr key={e.id} onClick={() => setSelected(e.id)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900">
-                  <td className={tdCls}>{formatDate(e.actualArrivalDate)}</td>
+              {[...allEntries].reverse().map((e) => (
+                <tr
+                  key={e.id}
+                  onClick={() => setSelected(e.id)}
+                  className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900 ${!includeAssumed && e.arrivalSource === 'eta' ? 'text-slate-400' : ''}`}
+                >
+                  <td className={`${tdCls} whitespace-nowrap`}>{arrivalLabel(e)}</td>
                   <td className={tdCls}>{e.supplier}</td>
-                  <td className={tdCls}>{e.poNumber ?? '—'}</td>
+                  <td className={`${tdCls} whitespace-nowrap`}>{poLineLabel(e)}</td>
+                  <td className={`${tdCls} font-mono text-xs`}>{e.asn ?? '—'}</td>
                   <td className={tdCls}>{e.carrier ?? '—'}</td>
                   <td className={`${tdCls} font-mono text-xs`}>{e.trackingNumber ?? '—'}</td>
                   <td className={tdCls}>
@@ -115,7 +134,7 @@ export function ArrivalLogPage() {
                     )}
                   </td>
                   <td className={tdCls}><VarianceCell days={e.varianceDays} /></td>
-                  <td className={`${tdCls} text-slate-500`}>{e.arrivalSource}</td>
+                  <td className={`${tdCls} whitespace-nowrap text-slate-500`}>{e.arrivalSource ? ARRIVAL_SOURCE_LABELS[e.arrivalSource] : '—'}</td>
                 </tr>
               ))}
             </tbody>

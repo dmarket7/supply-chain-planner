@@ -29,11 +29,12 @@ reportsRoutes.get('/arrivals', async (c) => {
   const from = c.req.query('from') ?? addDays(todayIso(), -90);
   const to = c.req.query('to') ?? todayIso();
   const supplier = c.req.query('supplier');
+  const includeAssumed = c.req.query('includeAssumed') === '1';
   const db = getDb(c.env.DATABASE_URL);
   const rows = await db
     .select({
       ...shipmentColumns,
-      originalPromisedDate: sql<string>`coalesce(
+      originalPromisedDate: sql<string | null>`coalesce(
         (select h.previous_date from ${promisedDateHistory} h
           where h.shipment_id = ${shipments.id} order by h.changed_at asc limit 1),
         ${shipments.promisedArrivalDate})`,
@@ -49,7 +50,9 @@ reportsRoutes.get('/arrivals', async (c) => {
     )
     .orderBy(asc(shipments.actualArrivalDate));
 
-  const entries = (rows as (Shipment & { originalPromisedDate: string })[]).map(toArrivalEntry);
-  const body: ArrivalsResponse = { entries, scorecard: supplierScorecard(entries) };
+  const entries = (rows as (Shipment & { originalPromisedDate: string | null })[])
+    .filter((r): r is Shipment & { originalPromisedDate: string } => !!r.originalPromisedDate)
+    .map(toArrivalEntry);
+  const body: ArrivalsResponse = { entries, scorecard: supplierScorecard(entries, includeAssumed) };
   return c.json(body);
 });
