@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { arrivalVariance, daysBetween } from '../shared/dates';
 import type { Shipment } from '../shared/types';
 import { planImport, planRow, type ExistingShipment, type IncomingRow } from '../server/importPlan';
-import { normalizeAuthUrl } from '../server/auth';
+import { describeAuthUrlProblem, normalizeAuthUrl } from '../server/auth';
 import { groupInboundByDay, supplierScorecard, toArrivalEntry } from '../server/reports';
 
 const incoming = (over: Partial<IncomingRow>): IncomingRow => ({
@@ -200,7 +200,17 @@ describe('normalizeAuthUrl', () => {
     ["'https://ep-x.neonauth.aws.neon.tech/neondb/auth//'", 'https://ep-x.neonauth.aws.neon.tech/neondb/auth'],
     ['', null],
     ['not a url', null],
+    ['postgresql://u:p@ep-x.aws.neon.tech/neondb?sslmode=require', null],
+    ['http://ep-x.neonauth.aws.neon.tech/neondb/auth', null],
   ])('%j -> %j', (raw, expected) => {
     expect(normalizeAuthUrl(raw)).toBe(expected);
+  });
+
+  it('explains a bad value without echoing it', () => {
+    const problem = describeAuthUrlProblem('postgresql://user:secret@ep-x.aws.neon.tech/neondb');
+    expect(problem).toMatch(/database connection string/);
+    expect(problem).not.toMatch(/secret/);
+    expect(describeAuthUrlProblem(undefined)).toBe('NEON_AUTH_URL is not set');
+    expect(describeAuthUrlProblem('https://ep-x.neonauth.aws.neon.tech/neondb/auth')).toBeNull();
   });
 });

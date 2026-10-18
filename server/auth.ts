@@ -19,10 +19,22 @@ export function normalizeAuthUrl(raw: string | undefined): string | null {
   const s = raw?.trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
   if (!s) return null;
   try {
-    return new URL(s).toString().replace(/\/+$/, '');
+    const url = new URL(s);
+    return url.protocol === 'https:' || url.hostname === 'localhost' ? url.toString().replace(/\/+$/, '') : null;
   } catch {
     return null;
   }
+}
+
+/** What's wrong with NEON_AUTH_URL, without echoing the value (it may be a connection string with a password). */
+export function describeAuthUrlProblem(raw: string | undefined): string | null {
+  if (normalizeAuthUrl(raw)) return null;
+  const s = raw?.trim().replace(/^["']/, '') ?? '';
+  if (!s) return 'NEON_AUTH_URL is not set';
+  if (/^postgres(ql)?:\/\//i.test(s)) {
+    return 'NEON_AUTH_URL contains a database connection string; set it to the Neon Auth URL (https://…/neondb/auth)';
+  }
+  return 'NEON_AUTH_URL is not an https URL; set it to the Neon Auth URL (https://…/neondb/auth)';
 }
 
 /** Why a token was rejected, without echoing the token. Safe to return to the client. */
@@ -46,8 +58,9 @@ function rejectionReason(err: unknown): string {
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   const authUrl = normalizeAuthUrl(c.env.NEON_AUTH_URL);
   if (!authUrl) {
-    console.error('NEON_AUTH_URL is missing or not a URL');
-    return c.json({ error: 'Server auth is not configured (NEON_AUTH_URL)' }, 500);
+    const problem = describeAuthUrlProblem(c.env.NEON_AUTH_URL)!;
+    console.error(problem);
+    return c.json({ error: 'Server misconfigured', reason: problem }, 500);
   }
 
   const header = c.req.header('Authorization');
@@ -61,7 +74,8 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
     c.set('userId', payload.sub);
   } catch (err) {
     const reason = rejectionReason(err);
-    console.warn(`Token rejected: ${reason}; auth host ${new URL(authUrl).host}`);
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.warn(`Token rejected: ${reason}; auth host ${new URL(authUrl).host}; ${detail}`);
     return c.json({ error: 'Invalid token', reason }, 401);
   }
   await next();
