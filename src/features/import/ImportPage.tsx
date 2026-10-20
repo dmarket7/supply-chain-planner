@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WorkBook } from 'xlsx';
 import { todayIso } from '../../../shared/dates';
 import { dedupeKeysForFile } from '../../../shared/importKeys';
+import { PROGRESS_BUCKETS, PROGRESS_BUCKET_LABELS } from '../../../shared/progress';
 import {
   IMPORT_CHUNK_SIZE,
   TARGET_FIELDS,
@@ -368,7 +369,17 @@ export function ImportPage() {
               Imported {importMutation.data.inserted.toLocaleString()} new and {importMutation.data.updated.toLocaleString()} updated lines.
               {importMutation.data.newlyClosed > 0 && ` ${importMutation.data.newlyClosed} closed since the last report.`}
               {importMutation.data.promisedDateChanges > 0 && ` ${importMutation.data.promisedDateChanges} ETAs changed.`}
-              {importMutation.data.removedAwaiting > 0 && ` ${importMutation.data.removedAwaiting} unshipped lines no longer in the report were removed.`}{' '}
+              {importMutation.data.removedAwaiting > 0 && ` ${importMutation.data.removedAwaiting} unshipped lines no longer in the report were removed.`}
+              {importMutation.data.previousReportDate && (
+                <>
+                  {' '}Since the {formatDate(importMutation.data.previousReportDate)} report:{' '}
+                  {PROGRESS_BUCKETS.filter((b) => importMutation.data!.progress[b] > 0)
+                    .map((b) => `${importMutation.data!.progress[b].toLocaleString()} ${PROGRESS_BUCKET_LABELS[b].toLowerCase()}`)
+                    .join(', ') || 'no changes'}
+                  .
+                </>
+              )}{' '}
+              <Link to="/shipments?progress=changed" className="underline">See what changed →</Link>{' '}
               <Link to="/" className="underline">View inbound by day →</Link>
             </div>
           )}

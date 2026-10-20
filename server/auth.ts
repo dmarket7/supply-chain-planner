@@ -72,6 +72,9 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
     });
     if (!payload.sub) return c.json({ error: 'Invalid token', reason: 'no subject' }, 401);
     c.set('userId', payload.sub);
+    // Shown in the UI next to manual edits and refresh runs; falls back to the user id.
+    const label = [payload.email, payload.name].find((v) => typeof v === 'string' && v);
+    c.set('userLabel', (label as string | undefined) ?? payload.sub);
   } catch (err) {
     const reason = rejectionReason(err);
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);

@@ -73,7 +73,7 @@ The app is built around the Meerkat inventory report's **Supplier POs** tab, and
 
 There is no receipt-date column, so the actual arrival date comes from the best evidence available:
 
-1. **Tracking** (once a provider is connected) or a date **entered by hand**. These are confirmed and never overwritten by a report.
+1. A date **entered by hand** (shown with an orange dot, with who entered it), or carrier tracking once carrier APIs are connected. These are confirmed and never overwritten by a report.
 2. **Between reports:** the line was Open in one report and Closed in the next, so it arrived in that window. The estimate is the supplier's ETA moved into the window: ETA before it → the window's first day (late); ETA after it → the report date (early).
 3. **Assumed on ETA:** the line was already Closed the first time it was imported. This says nothing about punctuality, so these lines are left out of the supplier scorecard unless "Include ETA-assumed arrivals" is ticked.
 
@@ -83,22 +83,25 @@ On-time performance is measured against the **first ETA** the supplier gave. Lat
 
 Every line carries the report's **Branch** (ERP warehouse ID, e.g. `JIT-MSUS-META`). The branch selector in the header filters every page and is remembered in the browser. With "All branches" selected, the Inbound page shows a per-branch summary (due today, next 7 days, past due, awaiting shipment, arrived in the last 30 days); click a row to switch to that branch. Lines imported without a branch appear as `(none)`.
 
-## Carrier tracking (Ship24)
+## Progress across uploads
 
-Tracking uses [Ship24](https://www.ship24.com/), an aggregator covering FedEx, DHL, UPS, air waybills and forwarders, behind the `TrackingProvider` interface (`server/tracking/`).
+Each upload is compared with what the previous ones said, and every change is logged per line (`line_changes`):
 
-1. Create a Ship24 account and an API key (the PRO plan covers 1,000 new tracking numbers a month; refreshing a number already tracked doesn't count again).
-2. `pnpm wrangler pages secret put SHIP24_API_KEY` (locally: add it to `.dev.vars`).
-3. `/api/health` shows `"SHIP24_API_KEY":"ok"`, and the Shipments page enables its buttons:
-   - **Refresh tracking:** looks up lines that haven't arrived.
-   - **Confirm estimated arrivals:** looks up arrived lines whose date is only a report estimate, to replace it with the carrier's delivery date. This uses quota for each new number, so run it per branch if quota is tight.
+- **Listed** for the first time (not shipped / shipped / already closed)
+- **Shipped**: a line is listed under an ASN where the previous report had that PO line awaiting shipment. The awaiting line's history moves onto the shipped line, so its timeline starts at the order.
+- **ETA moved** / **ship date moved** (from → to), **tracking added or changed**
+- **Closed** (= received; the arrival estimate is shown) and **reopened**
 
-How it works:
+The Shipments page shows a summary of the latest upload ("Since the Oct 18 report: 43 shipped, 41 arrived, …"); click a number to list those lines. Lines changed by the latest upload are tinted violet, the **Latest change** column says what changed, and the detail panel shows the line's full timeline across uploads. After an import, **See what changed** opens the same view.
 
-- Each distinct tracking number is looked up once and applied to every PO line that shares it. Only recognized formats are looked up (unrecognized references would just use quota), and a number is re-checked at most every 6 hours.
-- Refresh runs in batches of 20 numbers, because Workers' free plan allows 50 outbound requests per invocation; the app keeps calling until nothing is left (or Ship24 rate-limits, which pauses it).
+Lines in uploads made before this log existed get a reconstructed history: when they were first listed, when they closed, and supplier ETA changes.
+
+## Carrier tracking (later)
+
+Carrier API connections (FedEx, DHL, UPS, DSV, …) will be added one carrier at a time behind the `TrackingProvider` interface in `server/tracking/`: implement `provider.ts` for the carrier, enable it in `registry.ts` with its own secret, and the Shipments page shows **Refresh tracking** and its history automatically. Until then, everything comes from the uploaded reports. The refresh logic that is already in place:
+
+- Each distinct tracking number is looked up once and applied to every PO line that shares it. A number is re-checked at most every 6 hours, in batches of 20 (Workers' free plan allows 50 outbound requests per invocation).
 - A delivery from tracking replaces report-based estimates but never a date entered by hand. A delivery dated before the line's ship date is ignored (carriers reuse numbers, especially 10-digit DHL ones).
-- **DSV** house bills (`HKG…`, DBS-TW branch) go through Ship24 too; if coverage turns out poor, add a DSV provider using Wintec's DSV Track & Trace API access next to `ship24.ts` and list it first in `registry.ts`.
 - Scheduled refresh: Pages Functions can't run on cron, so add a small Worker with a Cron Trigger that calls `refreshTracking()` in a loop.
 
 ## Scripts

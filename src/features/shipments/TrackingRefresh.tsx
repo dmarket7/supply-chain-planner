@@ -3,8 +3,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBranch } from '../../app/branch';
 import { ErrorNote } from '../../components/ui';
 import { api } from '../../lib/api';
+import type { TrackingRun } from '../../../shared/types';
 
 type Scope = 'open' | 'estimated';
+
+/** Recent refresh runs (newest first); the first one defines "changed in the latest refresh". */
+export function useTrackingRuns() {
+  return useQuery({ queryKey: ['tracking-runs'], queryFn: () => api<TrackingRun[]>('/tracking/runs?limit=20') });
+}
 
 interface RefreshResult {
   checked: number;
@@ -15,6 +21,9 @@ interface RefreshResult {
   rateLimited: boolean;
   retryAfterSeconds: number | null;
   ignoredDeliveries: number;
+  notFound: number;
+  linesChanged: number;
+  runId: number;
 }
 
 interface Totals {
@@ -24,6 +33,8 @@ interface Totals {
   linesUpdated: number;
   arrivalsConfirmed: number;
   ignoredDeliveries: number;
+  notFound: number;
+  linesChanged: number;
   remaining: number;
   rateLimited: boolean;
   stopped: boolean;
@@ -62,17 +73,21 @@ export function useTrackingRefresh() {
       linesUpdated: 0,
       arrivalsConfirmed: 0,
       ignoredDeliveries: 0,
+      notFound: 0,
+      linesChanged: 0,
       remaining: 0,
       rateLimited: false,
       stopped: false,
     };
     setTotals(t);
+    let runId: number | undefined;
     try {
       for (;;) {
-        const r = await api<RefreshResult>('/tracking/refresh', {
+        const r: RefreshResult = await api<RefreshResult>('/tracking/refresh', {
           method: 'POST',
-          body: JSON.stringify({ scope, branch: branch || null }),
+          body: JSON.stringify({ scope, branch: branch || null, runId }),
         });
+        runId = r.runId;
         t = {
           ...t,
           checked: t.checked + r.checked,
@@ -80,11 +95,14 @@ export function useTrackingRefresh() {
           linesUpdated: t.linesUpdated + r.linesUpdated,
           arrivalsConfirmed: t.arrivalsConfirmed + r.arrivalsConfirmed,
           ignoredDeliveries: t.ignoredDeliveries + r.ignoredDeliveries,
+          notFound: t.notFound + r.notFound,
+          linesChanged: t.linesChanged + r.linesChanged,
           remaining: r.remaining,
           rateLimited: r.rateLimited,
           stopped: stop.current,
         };
         setTotals(t);
+        void queryClient.invalidateQueries({ queryKey: ['tracking-runs'] });
         if (r.rateLimited || r.remaining === 0 || r.checked === 0 || stop.current) break;
       }
     } catch (e) {
@@ -98,7 +116,9 @@ export function useTrackingRefresh() {
   const configured = status.data?.configured;
   const btn = 'rounded-md border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-slate-700';
   return {
-    buttons: (
+    // Nothing to show until a carrier API connection is configured on the server.
+    configured: !!configured,
+    buttons: !configured ? null : (
       <>
         {running ? (
           <button onClick={() => (stop.current = true)} className={btn}>
@@ -106,19 +126,13 @@ export function useTrackingRefresh() {
           </button>
         ) : (
           <>
-            <button
-              onClick={() => void run('open')}
-              disabled={!configured}
-              className={btn}
-              title={configured ? 'Look up tracking numbers of lines that have not arrived' : 'Set the SHIP24_API_KEY secret to enable tracking'}
-            >
+            <button onClick={() => void run('open')} className={btn} title="Look up tracking numbers of lines that have not arrived">
               {SCOPE_LABELS.open}
             </button>
             <button
               onClick={() => void run('estimated')}
-              disabled={!configured}
               className={btn}
-              title="Look up arrived lines whose date is only estimated from the reports, to replace it with the carrier's delivery date. Each new tracking number uses Ship24 quota."
+              title="Look up arrived lines whose date is only estimated from the reports, to replace it with the carrier's delivery date"
             >
               {SCOPE_LABELS.estimated}
             </button>
@@ -128,17 +142,15 @@ export function useTrackingRefresh() {
     ),
     status: (
       <>
-        {status.data && !configured && (
-          <p className="text-sm text-slate-500">Carrier tracking is off. Add a Ship24 API key (SHIP24_API_KEY secret) to turn it on.</p>
-        )}
         {totals && (
           <p className="text-sm text-slate-500">
             {running ? `${SCOPE_LABELS[totals.scope]}… ` : ''}
-            Checked {totals.checked.toLocaleString()} tracking numbers ({totals.found.toLocaleString()} found), updated{' '}
-            {totals.linesUpdated.toLocaleString()} lines
-            {totals.arrivalsConfirmed > 0 && `, confirmed ${totals.arrivalsConfirmed.toLocaleString()} arrivals`}.
+            Checked {totals.checked.toLocaleString()} tracking numbers: {totals.found.toLocaleString()} found
+            {totals.notFound > 0 && `, ${totals.notFound.toLocaleString()} not found`}.{' '}
+            {totals.linesChanged.toLocaleString()} lines changed
+            {totals.arrivalsConfirmed > 0 && `, ${totals.arrivalsConfirmed.toLocaleString()} arrivals confirmed`}.
             {totals.remaining > 0 && ` ${totals.remaining.toLocaleString()} still to check.`}
-            {totals.rateLimited && ' Paused: Ship24 rate limit reached, try again shortly.'}
+            {totals.rateLimited && ' Paused: the carrier rate limit was reached, try again shortly.'}
             {totals.stopped && ' Stopped.'}
             {totals.ignoredDeliveries > 0 &&
               ` ${totals.ignoredDeliveries} delivery dates ignored because they predate the ship date (reused tracking numbers).`}

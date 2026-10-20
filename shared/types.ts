@@ -1,3 +1,4 @@
+import type { ProgressCounts } from './progress';
 import { z } from 'zod';
 
 export const SHIPMENT_STATUSES = [
@@ -91,6 +92,9 @@ export interface ImportResult {
   newlyClosed: number;
   /** "Awaiting shipment" lines from earlier reports that are no longer in this one. */
   removedAwaiting: number;
+  /** Lines per kind of progress since the previous report. */
+  progress: ProgressCounts;
+  previousReportDate: string | null;
 }
 
 /** Target fields a spreadsheet column can be mapped to. */
@@ -155,6 +159,82 @@ export interface Shipment {
   arrivalWindowEnd: string | null;
   status: ShipmentStatus;
   lastTrackedAt: string | null;
+  trackingProvider: string | null;
+  /** null = never checked; false = the provider had no data; true = tracking found. */
+  trackingFound: boolean | null;
+  trackedCarrier: string | null;
+  /** Last time a lookup changed status, ETA, arrival or added scans. */
+  trackingChangedAt: string | null;
+  trackingRunId: number | null;
+  lastEventAt: string | null;
+  arrivalSetBy: string | null;
+  arrivalSetAt: string | null;
+  /** Changes made by the most recent upload that changed this line. */
+  latestChange: { importId: number | null; reportDate: string; changes: LineChange[] } | null;
+}
+
+export interface TrackingRun {
+  id: number;
+  startedAt: string;
+  updatedAt: string;
+  startedBy: string;
+  scope: string;
+  branch: string | null;
+  provider: string | null;
+  batches: number;
+  checked: number;
+  found: number;
+  notFound: number;
+  linesUpdated: number;
+  linesChanged: number;
+  arrivalsConfirmed: number;
+  ignoredDeliveries: number;
+  remaining: number;
+  rateLimited: boolean;
+  error: string | null;
+}
+
+/**
+ * What an upload can change on a line, compared with the previous upload:
+ * - new: first listed (to = status it was listed with)
+ * - shipped: listed with an ASN where the previous report had the PO line awaiting shipment
+ * - eta_changed / ship_date_changed: supplier ETA or ETD moved (from -> to)
+ * - tracking_added / tracking_changed: tracking number appeared or changed
+ * - closed: PO line closed, i.e. received (to = estimated arrival date)
+ * - reopened: closed line listed as open again
+ */
+export const LINE_CHANGE_KINDS = [
+  'new',
+  'shipped',
+  'eta_changed',
+  'ship_date_changed',
+  'tracking_added',
+  'tracking_changed',
+  'closed',
+  'reopened',
+] as const;
+export type LineChangeKind = (typeof LINE_CHANGE_KINDS)[number];
+
+export interface LineChange {
+  kind: LineChangeKind;
+  from: string | null;
+  to: string | null;
+}
+
+export interface LineChangeEntry extends LineChange {
+  importId: number | null;
+  reportDate: string;
+}
+
+export interface ProgressSummary {
+  importId: number;
+  reportDate: string;
+  fileName: string;
+  /** null when the latest upload is the first one. */
+  previousReportDate: string | null;
+  counts: ProgressCounts;
+  /** Awaiting-shipment lines the latest report no longer lists; null when filtered by branch. */
+  removedAwaiting: number | null;
 }
 
 export interface BranchSummary {
@@ -180,6 +260,8 @@ export interface TrackingEvent {
 
 export interface ShipmentDetail extends Shipment {
   events: TrackingEvent[];
+  /** Every upload's changes to this line, oldest first. */
+  progress: LineChangeEntry[];
   promisedDateHistory: { previousDate: string; newDate: string; changedAt: string }[];
 }
 

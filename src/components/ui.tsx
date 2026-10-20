@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import type { ShipmentStatus } from '../../shared/types';
-import { STATUS_LABELS, STATUS_STYLES } from '../lib/format';
+import {
+  DATA_SOURCE_DESCRIPTIONS,
+  DATA_SOURCE_DOT,
+  DATA_SOURCE_LABELS,
+  STATUS_LABELS,
+  STATUS_STYLES,
+  type DataSource,
+} from '../lib/format';
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
@@ -59,3 +66,32 @@ export function ErrorNote({ error }: { error: unknown }) {
 export const tableCls = 'w-full text-left text-sm';
 export const thCls = 'border-b border-slate-200 px-3 py-2 font-medium text-slate-500 dark:border-slate-800';
 export const tdCls = 'border-b border-slate-100 px-3 py-2 dark:border-slate-900';
+
+/**
+ * Small marker before a value saying where it came from (label for screen readers and on hover).
+ * Report data is the default and gets no marker, so manual and carrier values stand out.
+ */
+export function SourceDot({ source }: { source: DataSource | null }) {
+  if (!source || source === 'report') return null;
+  return (
+    <span title={DATA_SOURCE_DESCRIPTIONS[source]} className="mr-1.5 inline-flex align-middle">
+      <span className={`inline-block h-2 w-2 rounded-full ${DATA_SOURCE_DOT[source]}`} aria-hidden />
+      <span className="sr-only">{DATA_SOURCE_LABELS[source]}: </span>
+    </span>
+  );
+}
+
+/** Legend for the source markers. */
+export function SourceLegend({ sources, extra }: { sources: DataSource[]; extra?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+      {sources.map((s) => (
+        <span key={s} className="inline-flex items-center">
+          <SourceDot source={s} />
+          {DATA_SOURCE_DESCRIPTIONS[s]}
+        </span>
+      ))}
+      {extra}
+    </div>
+  );
+}

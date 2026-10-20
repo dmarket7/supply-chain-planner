@@ -1,5 +1,3 @@
 # Copy to .dev.vars for `wrangler pages dev`
 DATABASE_URL=postgresql://user:password@ep-xxx-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
 NEON_AUTH_URL=https://ep-xxx.neonauth.us-east-2.aws.neon.build/neondb/auth
-# Optional: enables "Refresh tracking" (https://dashboard.ship24.com/integrations/api-keys)
-SHIP24_API_KEY=

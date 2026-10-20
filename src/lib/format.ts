@@ -52,3 +52,51 @@ export function poLineLabel(s: { poNumber?: string | null; lineRef?: string | nu
   if (!s.poNumber) return '—';
   return s.lineRef ? `${s.poNumber} / ${s.lineRef}` : s.poNumber;
 }
+
+/** Where a value came from: a carrier API lookup, a person, or the uploaded report. */
+export type DataSource = 'tracking' | 'manual' | 'report';
+
+export const DATA_SOURCE_LABELS: Record<DataSource, string> = {
+  tracking: 'Carrier',
+  manual: 'Manual',
+  report: 'Report',
+};
+
+export const DATA_SOURCE_DESCRIPTIONS: Record<DataSource, string> = {
+  tracking: 'From carrier tracking',
+  manual: 'Entered manually',
+  report: 'From the uploaded report',
+};
+
+/** Dot beside a value; hollow for report data so the coloured ones stand out. */
+export const DATA_SOURCE_DOT: Record<DataSource, string> = {
+  tracking: 'bg-violet-500 dark:bg-violet-400',
+  manual: 'bg-orange-500 dark:bg-orange-400',
+  report: 'border border-slate-400 dark:border-slate-500',
+};
+
+type SourceFields = Pick<Shipment, 'arrivalSource' | 'actualArrivalDate'>;
+
+export function arrivalDataSource(s: SourceFields): DataSource | null {
+  if (!s.actualArrivalDate) return null;
+  if (s.arrivalSource === 'manual') return 'manual';
+  if (s.arrivalSource === 'tracking') return 'tracking';
+  return 'report';
+}
+
+/** "just now", "5 min ago", "3 h ago", "2 d ago", then a date. */
+export function relativeTime(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return '—';
+  const mins = Math.round((now - new Date(iso).getTime()) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days} d ago`;
+  return formatDate(iso);
+}
+
+export function formatDateTime(iso: string | null | undefined): string {
+  return iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+}

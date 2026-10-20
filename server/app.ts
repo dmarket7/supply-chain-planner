@@ -4,6 +4,7 @@ import type { AppEnv } from './env';
 import { branchesRoutes } from './routes/branches';
 import { importsRoutes } from './routes/imports';
 import { mappingsRoutes } from './routes/mappings';
+import { progressRoutes } from './routes/progress';
 import { reportsRoutes } from './routes/reports';
 import { shipmentsRoutes } from './routes/shipments';
 import { trackingRoutes } from './routes/tracking';
@@ -21,8 +22,6 @@ app.get('/health', (c) => {
       config: {
         NEON_AUTH_URL: authProblem ?? 'ok',
         DATABASE_URL: databaseOk ? 'ok' : 'DATABASE_URL is missing or not a postgresql:// connection string',
-        // Optional: without it the app works, but "Refresh tracking" is disabled.
-        SHIP24_API_KEY: c.env.SHIP24_API_KEY?.trim() ? 'ok' : 'not set (tracking disabled)',
       },
     },
     ok ? 200 : 500,
@@ -34,6 +33,7 @@ app.route('/imports', importsRoutes);
 app.route('/mappings', mappingsRoutes);
 app.route('/shipments', shipmentsRoutes);
 app.route('/reports', reportsRoutes);
+app.route('/progress', progressRoutes);
 app.route('/tracking', trackingRoutes);
 
 app.onError((err, c) => {

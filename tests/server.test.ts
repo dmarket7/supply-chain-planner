@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { arrivalVariance, daysBetween } from '../shared/dates';
 import type { Shipment } from '../shared/types';
-import { planImport, planRow, type ExistingShipment, type IncomingRow } from '../server/importPlan';
+import { planImport, planRow, poLineKey, type ExistingShipment, type IncomingRow } from '../server/importPlan';
+import { bucketsOf } from '../shared/progress';
 import { describeAuthUrlProblem, normalizeAuthUrl } from '../server/auth';
 import { groupInboundByDay, supplierScorecard, toArrivalEntry } from '../server/reports';
 
@@ -59,6 +60,15 @@ const shipment = (over: Partial<Shipment>): Shipment => ({
   arrivalWindowEnd: null,
   status: 'pending',
   lastTrackedAt: null,
+  trackingProvider: null,
+  trackingFound: null,
+  trackedCarrier: null,
+  trackingChangedAt: null,
+  trackingRunId: null,
+  lastEventAt: null,
+  arrivalSetBy: null,
+  arrivalSetAt: null,
+  latestChange: null,
   ...over,
 });
 
@@ -163,6 +173,71 @@ describe('planImport', () => {
     expect(plan).toMatchObject({ insertCount: 1, updateCount: 2, newlyClosed: 1 });
     expect(plan.promisedDateChanges).toEqual([{ dedupeKey: 'a', previousDate: '2026-10-08', newDate: '2026-10-09' }]);
   });
+
+  it('logs progress: closed, ETA moved, tracking added, new and reopened lines', () => {
+    const plan = planImport(
+      [
+        incoming({ dedupeKey: 'a', poStatus: 'closed', promisedArrivalDate: '2026-10-09' }),
+        incoming({ dedupeKey: 'b', trackingNumber: '878196053414', shipDate: '2026-10-06' }),
+        incoming({ dedupeKey: 'c', asn: null }),
+        incoming({ dedupeKey: 'd', poStatus: 'open' }),
+        incoming({ dedupeKey: 'e' }),
+      ],
+      [
+        existing({ dedupeKey: 'a', promisedArrivalDate: '2026-10-08' }),
+        existing({ dedupeKey: 'b', trackingNumber: null, shipDate: '2026-10-05' }),
+        existing({ dedupeKey: 'd', poStatus: 'closed', status: 'delivered', actualArrivalDate: '2026-10-05', arrivalSource: 'eta' }),
+        existing({ dedupeKey: 'e', trackingNumber: null, shipDate: null }),
+      ],
+      '2026-10-10',
+    );
+    expect(plan.changes).toEqual([
+      { dedupeKey: 'a', kind: 'closed', from: null, to: '2026-10-09' },
+      { dedupeKey: 'a', kind: 'eta_changed', from: '2026-10-08', to: '2026-10-09' },
+      { dedupeKey: 'b', kind: 'ship_date_changed', from: '2026-10-05', to: '2026-10-06' },
+      { dedupeKey: 'b', kind: 'tracking_added', from: null, to: '878196053414' },
+      { dedupeKey: 'c', kind: 'new', from: null, to: 'pending' },
+      { dedupeKey: 'd', kind: 'reopened', from: null, to: null },
+    ]);
+  });
+
+  it('logs a new ASN line for a PO line that was awaiting shipment as "shipped"', () => {
+    const plan = planImport(
+      [
+        incoming({ dedupeKey: 'po:P1:1-1:A9', asn: 'A9' }),
+        incoming({ dedupeKey: 'po:P2:1-1:B1', poNumber: 'P2', asn: 'B1' }),
+        incoming({ dedupeKey: 'po:P3:1-1:C1', poNumber: 'P3', asn: 'C1', poStatus: 'closed', promisedArrivalDate: '2026-10-09' }),
+      ],
+      [],
+      '2026-10-10',
+      new Set(['P1', 'P3'].map((po) => poLineKey({ poNumber: po, lineRef: '1-1' })!)),
+    );
+    expect(plan.changes.map((c) => [c.dedupeKey, c.kind, c.to])).toEqual([
+      ['po:P1:1-1:A9', 'shipped', 'A9'],
+      ['po:P2:1-1:B1', 'new', 'in_transit'],
+      ['po:P3:1-1:C1', 'shipped', 'C1'],
+      ['po:P3:1-1:C1', 'closed', '2026-10-09'],
+    ]);
+  });
+});
+
+describe('progress buckets and labels', () => {
+  it('groups changes per line', () => {
+    expect(bucketsOf([{ kind: 'new', from: null, to: 'in_transit' }])).toEqual(['shipped']);
+    expect(bucketsOf([{ kind: 'new', from: null, to: 'awaiting_shipment' }])).toEqual(['new_order']);
+    expect(bucketsOf([{ kind: 'closed', from: null, to: '2026-10-09' }, { kind: 'eta_changed', from: '2026-10-08', to: '2026-10-09' }]).sort()).toEqual([
+      'arrived',
+      'eta_moved',
+    ]);
+  });
+
+  it('describes changes in words', async () => {
+    const { changeLabel, headlineChange } = await import('../src/lib/progress');
+    expect(changeLabel({ kind: 'eta_changed', from: '2026-10-15', to: '2026-10-22' })).toMatch(/^ETA .+ → .+ \(\+7d\)$/);
+    expect(changeLabel({ kind: 'shipped', from: null, to: 'A9' })).toBe('Shipped (ASN A9)');
+    expect(changeLabel({ kind: 'new', from: null, to: 'awaiting_shipment' })).toBe('Listed, not shipped');
+    expect(headlineChange([{ kind: 'eta_changed', from: null, to: '2026-10-22' }, { kind: 'closed', from: null, to: null }])?.kind).toBe('closed');
+  });
 });
 
 describe('reports', () => {
@@ -213,5 +288,15 @@ describe('normalizeAuthUrl', () => {
     expect(problem).not.toMatch(/secret/);
     expect(describeAuthUrlProblem(undefined)).toBe('NEON_AUTH_URL is not set');
     expect(describeAuthUrlProblem('https://ep-x.neonauth.aws.neon.tech/neondb/auth')).toBeNull();
+  });
+});
+
+describe('data source labels', () => {
+  it('marks manual and carrier arrivals; estimates come from the report', async () => {
+    const { arrivalDataSource } = await import('../src/lib/format');
+    expect(arrivalDataSource(shipment({ actualArrivalDate: '2026-10-10', arrivalSource: 'manual' }))).toBe('manual');
+    expect(arrivalDataSource(shipment({ actualArrivalDate: '2026-10-10', arrivalSource: 'report_window' }))).toBe('report');
+    expect(arrivalDataSource(shipment({ actualArrivalDate: '2026-10-10', arrivalSource: 'tracking' }))).toBe('tracking');
+    expect(arrivalDataSource(shipment({}))).toBeNull();
   });
 });

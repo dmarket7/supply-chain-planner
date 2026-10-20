@@ -12,7 +12,7 @@ import {
   timestamp,
   boolean,
 } from 'drizzle-orm/pg-core';
-import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping } from '../../shared/types';
+import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping, type LineChangeKind } from '../../shared/types';
 
 export const shipmentStatus = pgEnum('shipment_status', SHIPMENT_STATUSES);
 export const shipmentMode = pgEnum('shipment_mode', SHIPMENT_MODES);
@@ -52,6 +52,29 @@ export const suppliers = pgTable('suppliers', {
   name: text('name').notNull().unique(),
 });
 
+/** One click of "Refresh tracking" (or a cron run): totals across all of its batches. */
+export const trackingRuns = pgTable('tracking_runs', {
+  id: serial('id').primaryKey(),
+  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  startedBy: text('started_by').notNull(),
+  /** open | estimated | line */
+  scope: text('scope').notNull(),
+  branch: text('branch'),
+  provider: text('provider'),
+  batches: integer('batches').notNull().default(0),
+  checked: integer('checked').notNull().default(0),
+  found: integer('found').notNull().default(0),
+  notFound: integer('not_found').notNull().default(0),
+  linesUpdated: integer('lines_updated').notNull().default(0),
+  linesChanged: integer('lines_changed').notNull().default(0),
+  arrivalsConfirmed: integer('arrivals_confirmed').notNull().default(0),
+  ignoredDeliveries: integer('ignored_deliveries').notNull().default(0),
+  remaining: integer('remaining').notNull().default(0),
+  rateLimited: boolean('rate_limited').notNull().default(false),
+  error: text('error'),
+}, (t) => [index('tracking_runs_started_idx').on(t.startedAt)]);
+
 export const shipments = pgTable('shipments', {
   id: serial('id').primaryKey(),
   /** `po:<PO>:<LINE>:<ASN>` (or `trk:<TRACKING>` when a report has no PO); the upsert key for re-imports. */
@@ -85,6 +108,21 @@ export const shipments = pgTable('shipments', {
   lastSeenOpenReportDate: date('last_seen_open_report_date'),
   status: shipmentStatus('status').notNull().default('pending'),
   lastTrackedAt: timestamp('last_tracked_at', { withTimezone: true }),
+  /** Provider that last looked this line up, e.g. `fedex`. */
+  trackingProvider: text('tracking_provider'),
+  /** null = never checked; false = provider had no data; true = provider returned tracking. */
+  trackingFound: boolean('tracking_found'),
+  /** Carrier as identified by the provider. */
+  trackedCarrier: text('tracked_carrier'),
+  /** Last time a lookup actually changed status, ETA, arrival or added scans. */
+  trackingChangedAt: timestamp('tracking_changed_at', { withTimezone: true }),
+  /** Run that made that last change. */
+  trackingRunId: integer('tracking_run_id').references(() => trackingRuns.id, { onDelete: 'set null' }),
+  /** Time of the newest carrier scan. */
+  lastEventAt: timestamp('last_event_at', { withTimezone: true }),
+  /** Who entered a manual arrival, and when. */
+  arrivalSetBy: text('arrival_set_by'),
+  arrivalSetAt: timestamp('arrival_set_at', { withTimezone: true }),
   firstImportId: integer('first_import_id').references(() => imports.id),
   lastImportId: integer('last_import_id').references(() => imports.id),
   /** The spreadsheet row as last imported, so unmapped columns are available later. */
@@ -110,6 +148,23 @@ export const trackingEvents = pgTable('tracking_events', {
   provider: text('provider').notNull(),
   raw: jsonb('raw'),
 }, (t) => [index('tracking_events_shipment_idx').on(t.shipmentId, t.occurredAt)]);
+
+/**
+ * What one upload changed on one line (see LINE_CHANGE_KINDS), so a line's progress can be followed
+ * from report to report. from/to hold the old and new value (dates as YYYY-MM-DD, statuses as enum values).
+ */
+export const lineChanges = pgTable('line_changes', {
+  id: serial('id').primaryKey(),
+  shipmentId: integer('shipment_id').notNull().references(() => shipments.id, { onDelete: 'cascade' }),
+  importId: integer('import_id').references(() => imports.id, { onDelete: 'set null' }),
+  reportDate: date('report_date').notNull(),
+  kind: text('kind').$type<LineChangeKind>().notNull(),
+  fromValue: text('from_value'),
+  toValue: text('to_value'),
+}, (t) => [
+  index('line_changes_shipment_idx').on(t.shipmentId, t.reportDate),
+  index('line_changes_import_idx').on(t.importId),
+]);
 
 export const promisedDateHistory = pgTable('promised_date_history', {
   id: serial('id').primaryKey(),

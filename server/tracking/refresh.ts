@@ -1,8 +1,8 @@
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import { ESTIMATED_ARRIVAL_SOURCES } from '../../shared/types';
 import type { Db } from '../db/client';
-import { shipments, trackingEvents } from '../db/schema';
-import { applyTrackingResult } from './apply';
+import { shipments, trackingEvents, trackingRuns } from '../db/schema';
+import { applyTrackingResult, latestEventAt, lineChanged } from './apply';
 import { TrackingRateLimitError, type TrackingProvider, type TrackingRequest, type TrackingResult } from './provider';
 
 /**
@@ -13,7 +13,8 @@ export const REFRESH_BATCH_SIZE = 20;
 /** Don't re-check a number more often than this unless forced. */
 const MIN_HOURS_BETWEEN_CHECKS = 6;
 
-export type RefreshScope = 'open' | 'estimated';
+/** `line`: specific shipments (with `shipmentIds`), whatever their arrival state. */
+export type RefreshScope = 'open' | 'estimated' | 'line';
 
 export interface RefreshOptions {
   /** `open`: lines not arrived yet. `estimated`: arrived lines whose date is only a report estimate. */
@@ -21,6 +22,8 @@ export interface RefreshOptions {
   branch?: string | null;
   shipmentIds?: number[];
   force?: boolean;
+  /** Run to add this batch's totals to and to stamp changed lines with. */
+  runId?: number;
 }
 
 export interface RefreshResult {
@@ -34,6 +37,10 @@ export interface RefreshResult {
   rateLimited: boolean;
   retryAfterSeconds: number | null;
   ignoredDeliveries: number;
+  /** Numbers the provider had no data for. */
+  notFound: number;
+  /** Lines whose status, dates or scans actually changed. */
+  linesChanged: number;
 }
 
 function candidateFilter(opts: RefreshOptions): SQL {
@@ -46,7 +53,9 @@ function candidateFilter(opts: RefreshOptions): SQL {
   const scope =
     opts.scope === 'open'
       ? isNull(shipments.actualArrivalDate)
-      : inArray(shipments.arrivalSource, [...ESTIMATED_ARRIVAL_SOURCES]);
+      : opts.scope === 'estimated'
+        ? inArray(shipments.arrivalSource, [...ESTIMATED_ARRIVAL_SOURCES])
+        : undefined;
   return and(
     isNotNull(shipments.trackingNumber),
     // Only formats we recognized; unrecognized references would just burn tracker quota.
@@ -91,12 +100,36 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], opt
     rateLimited: false,
     retryAfterSeconds: null,
     ignoredDeliveries: 0,
+    notFound: 0,
+    linesChanged: 0,
   };
-  if (!numbers.length) return result;
+  const runUpdate = () =>
+    db
+      .update(trackingRuns)
+      .set({
+        batches: sql`${trackingRuns.batches} + 1`,
+        checked: sql`${trackingRuns.checked} + ${result.checked}`,
+        found: sql`${trackingRuns.found} + ${result.found}`,
+        notFound: sql`${trackingRuns.notFound} + ${result.notFound}`,
+        linesUpdated: sql`${trackingRuns.linesUpdated} + ${result.linesUpdated}`,
+        linesChanged: sql`${trackingRuns.linesChanged} + ${result.linesChanged}`,
+        arrivalsConfirmed: sql`${trackingRuns.arrivalsConfirmed} + ${result.arrivalsConfirmed}`,
+        ignoredDeliveries: sql`${trackingRuns.ignoredDeliveries} + ${result.ignoredDeliveries}`,
+        remaining: result.remaining,
+        rateLimited: result.rateLimited,
+        updatedAt: new Date(),
+      })
+      .where(eq(trackingRuns.id, opts.runId!));
+  if (!numbers.length) {
+    if (opts.runId) await runUpdate();
+    return result;
+  }
 
   const requests = numbers as TrackingRequest[];
   const results = new Map<string, { provider: string; result: TrackingResult }>();
   const attempted = new Set<string>();
+  /** Provider that looked up each number, so not-found lines record who said so. */
+  const askedProvider = new Map<string, string>();
   for (const provider of providers) {
     const mine = requests.filter((r) => !attempted.has(r.trackingNumber) && provider.supports(r));
     if (!mine.length) continue;
@@ -104,20 +137,26 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], opt
     try {
       found = await provider.track(mine);
       mine.forEach((r) => attempted.add(r.trackingNumber));
+      mine.forEach((r) => askedProvider.set(r.trackingNumber, provider.name));
     } catch (err) {
       if (!(err instanceof TrackingRateLimitError)) throw err;
       result.rateLimited = true;
       result.retryAfterSeconds = err.retryAfterSeconds;
       found = err.partial;
       found.forEach((r) => attempted.add(r.trackingNumber));
+      found.forEach((r) => askedProvider.set(r.trackingNumber, provider.name));
     }
     for (const r of found) results.set(r.trackingNumber, { provider: provider.name, result: r });
     if (result.rateLimited) break;
   }
   result.checked = attempted.size;
   result.found = results.size;
+  result.notFound = attempted.size - results.size;
   result.remaining = Math.max(0, total - attempted.size);
-  if (!attempted.size) return result;
+  if (!attempted.size) {
+    if (opts.runId) await runUpdate();
+    return result;
+  }
 
   // Every line that uses one of the attempted numbers (within the same scope/branch).
   const lines = await db
@@ -126,22 +165,28 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], opt
       trackingNumber: shipments.trackingNumber,
       status: shipments.status,
       shipDate: shipments.shipDate,
+      estimatedArrivalDate: shipments.estimatedArrivalDate,
       actualArrivalDate: shipments.actualArrivalDate,
       arrivalSource: shipments.arrivalSource,
+      lastEventAt: shipments.lastEventAt,
     })
     .from(shipments)
     .where(and(where, inArray(shipments.trackingNumber, [...attempted])));
 
   const now = new Date();
   const writes = [];
-  const notFoundIds: number[] = [];
+  const notFoundIds = new Map<string, number[]>();
   for (const line of lines) {
     const hit = results.get(line.trackingNumber!);
     if (!hit) {
-      notFoundIds.push(line.id);
+      const provider = askedProvider.get(line.trackingNumber!) ?? providers[0].name;
+      notFoundIds.set(provider, [...(notFoundIds.get(provider) ?? []), line.id]);
       continue;
     }
     const update = applyTrackingResult(line, hit.result);
+    const newestEvent = latestEventAt(hit.result);
+    const changed = lineChanged(line, update, newestEvent);
+    if (changed) result.linesChanged++;
     if (update.ignoredDelivery) {
       result.ignoredDeliveries++;
       console.warn(`Line ${line.id}: ${update.ignoredDelivery}`);
@@ -158,7 +203,11 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], opt
           arrivalSource: update.arrivalSource,
           ...(update.confirmedArrival ? { arrivalWindowStart: null, arrivalWindowEnd: null } : {}),
           lastTrackedAt: now,
-          updatedAt: now,
+          trackingProvider: hit.provider,
+          trackingFound: true,
+          trackedCarrier: hit.result.carrier ?? sql`${shipments.trackedCarrier}`,
+          lastEventAt: newestEvent ? new Date(newestEvent) : sql`${shipments.lastEventAt}`,
+          ...(changed ? { trackingChangedAt: now, trackingRunId: opts.runId ?? null, updatedAt: now } : {}),
         })
         .where(eq(shipments.id, line.id)),
       db.delete(trackingEvents).where(and(eq(trackingEvents.shipmentId, line.id), eq(trackingEvents.provider, hit.provider))),
@@ -180,7 +229,20 @@ export async function refreshTracking(db: Db, providers: TrackingProvider[], opt
     }
   }
   // Numbers the provider had nothing on still count as checked, so they wait before the next try.
-  if (notFoundIds.length) writes.push(db.update(shipments).set({ lastTrackedAt: now }).where(inArray(shipments.id, notFoundIds)));
+  // A line found earlier keeps trackingFound = true (a provider can briefly return nothing).
+  for (const [provider, ids] of notFoundIds) {
+    writes.push(
+      db
+        .update(shipments)
+        .set({
+          lastTrackedAt: now,
+          trackingProvider: provider,
+          trackingFound: sql`coalesce(${shipments.trackingFound}, false)`,
+        })
+        .where(inArray(shipments.id, ids)),
+    );
+  }
+  if (opts.runId) writes.push(runUpdate());
 
   // One round trip, one transaction.
   if (writes.length) await db.batch(writes as [(typeof writes)[number], ...typeof writes]);

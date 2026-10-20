@@ -1,5 +1,5 @@
 import { addDays } from '../shared/dates';
-import type { ArrivalSource, PoStatus, ShipmentInput, ShipmentStatus } from '../shared/types';
+import type { ArrivalSource, LineChangeKind, PoStatus, ShipmentInput, ShipmentStatus } from '../shared/types';
 
 export interface ExistingShipment {
   id: number;
@@ -13,6 +13,8 @@ export interface ExistingShipment {
   arrivalWindowEnd: string | null;
   lastSeenOpenReportDate: string | null;
   lastTrackedAt: Date | string | null;
+  shipDate?: string | null;
+  trackingNumber?: string | null;
 }
 
 export interface IncomingRow extends ShipmentInput {
@@ -36,6 +38,20 @@ export interface ImportPlan {
   updateCount: number;
   newlyClosed: number;
   promisedDateChanges: { dedupeKey: string; previousDate: string; newDate: string }[];
+  /** Progress log entries for this upload (see LINE_CHANGE_KINDS). */
+  changes: PlannedChange[];
+}
+
+export interface PlannedChange {
+  dedupeKey: string;
+  kind: LineChangeKind;
+  from: string | null;
+  to: string | null;
+}
+
+/** PO + line, to match a newly shipped (ASN) line with the "awaiting shipment" line it came from. */
+export function poLineKey(r: { poNumber?: string | null; lineRef?: string | null }): string | null {
+  return r.poNumber ? `${r.poNumber}\u0000${r.lineRef ?? ''}` : null;
 }
 
 const CONFIRMED: readonly (ArrivalSource | null)[] = ['manual', 'tracking'];
@@ -126,20 +142,51 @@ export function planRow(row: IncomingRow, prev: ExistingShipment | undefined, re
   return { ...base, status, actualArrivalDate: null, arrivalSource: null };
 }
 
-export function planImport(rows: IncomingRow[], existing: ExistingShipment[], reportDate: string): ImportPlan {
+/**
+ * @param awaitingPoLines poLineKey()s of PO lines that earlier reports listed as awaiting shipment; a new
+ *   ASN line for one of them is logged as "shipped" rather than "new".
+ */
+export function planImport(
+  rows: IncomingRow[],
+  existing: ExistingShipment[],
+  reportDate: string,
+  awaitingPoLines: ReadonlySet<string> = new Set(),
+): ImportPlan {
   const existingByKey = new Map(existing.map((e) => [e.dedupeKey, e]));
   const planned: PlannedRow[] = [];
   const promisedDateChanges: ImportPlan['promisedDateChanges'] = [];
   let updateCount = 0;
   let newlyClosed = 0;
+  const changes: PlannedChange[] = [];
 
   for (const row of rows) {
     const prev = existingByKey.get(row.dedupeKey);
     const next = planRow(row, prev, reportDate);
     planned.push(next);
-    if (!prev) continue;
+    const log = (kind: LineChangeKind, from: string | null, to: string | null) =>
+      changes.push({ dedupeKey: row.dedupeKey, kind, from, to });
+    if (!prev) {
+      const key = poLineKey(row);
+      if (row.asn && key && awaitingPoLines.has(key)) {
+        log('shipped', null, row.asn);
+        // Shipped and received between two reports.
+        if (row.poStatus === 'closed') log('closed', null, next.actualArrivalDate);
+      } else log('new', null, next.status);
+      continue;
+    }
     updateCount++;
-    if (prev.poStatus === 'open' && row.poStatus === 'closed') newlyClosed++;
+    if (prev.poStatus === 'open' && row.poStatus === 'closed') {
+      newlyClosed++;
+      log('closed', null, next.actualArrivalDate);
+    }
+    if (prev.poStatus === 'closed' && row.poStatus === 'open') log('reopened', null, null);
+    if (next.promisedArrivalDate && prev.promisedArrivalDate !== next.promisedArrivalDate) {
+      log('eta_changed', prev.promisedArrivalDate, next.promisedArrivalDate);
+    }
+    if (prev.shipDate !== undefined && row.shipDate && prev.shipDate !== row.shipDate) log('ship_date_changed', prev.shipDate, row.shipDate);
+    if (prev.trackingNumber !== undefined && row.trackingNumber && prev.trackingNumber !== row.trackingNumber) {
+      log(prev.trackingNumber ? 'tracking_changed' : 'tracking_added', prev.trackingNumber, row.trackingNumber);
+    }
     if (prev.promisedArrivalDate && next.promisedArrivalDate && prev.promisedArrivalDate !== next.promisedArrivalDate) {
       promisedDateChanges.push({
         dedupeKey: row.dedupeKey,
@@ -148,5 +195,5 @@ export function planImport(rows: IncomingRow[], existing: ExistingShipment[], re
       });
     }
   }
-  return { rows: planned, insertCount: planned.length - updateCount, updateCount, newlyClosed, promisedDateChanges };
+  return { rows: planned, insertCount: planned.length - updateCount, updateCount, newlyClosed, promisedDateChanges, changes };
 }

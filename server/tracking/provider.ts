@@ -39,7 +39,7 @@ export class TrackingRateLimitError extends Error {
 }
 
 /**
- * A source of tracking data: an aggregator (Ship24, …) or a single carrier API.
+ * A source of tracking data, typically one carrier's API.
  * Implementations live next to this file and are registered in registry.ts.
  */
 export interface TrackingProvider {

@@ -5,6 +5,8 @@ import type { TrackingResult } from './provider';
 export interface TrackedLine {
   id: number;
   status: ShipmentStatus;
+  estimatedArrivalDate?: string | null;
+  lastEventAt?: Date | string | null;
   shipDate: string | null;
   actualArrivalDate: string | null;
   arrivalSource: ArrivalSource | null;
@@ -69,4 +71,23 @@ export function applyTrackingResult(line: TrackedLine, result: TrackingResult): 
     confirmedArrival: false,
     ignoredDelivery,
   };
+}
+
+/** Newest scan time in a result, or null. */
+export function latestEventAt(result: TrackingResult): string | null {
+  let max: string | null = null;
+  for (const e of result.events) if (!max || e.occurredAt > max) max = e.occurredAt;
+  return max;
+}
+
+/** Whether applying a lookup changes anything someone would see: status, dates, or new scans. */
+export function lineChanged(line: TrackedLine, update: LineUpdate, newestEvent: string | null): boolean {
+  const prevEvent = line.lastEventAt ? new Date(line.lastEventAt).getTime() : null;
+  return (
+    update.status !== line.status ||
+    update.estimatedArrivalDate !== (line.estimatedArrivalDate ?? null) ||
+    update.actualArrivalDate !== line.actualArrivalDate ||
+    update.arrivalSource !== line.arrivalSource ||
+    (newestEvent !== null && (prevEvent === null || new Date(newestEvent).getTime() > prevEvent))
+  );
 }

@@ -2,9 +2,18 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { todayIso } from '../../../shared/dates';
 import type { ShipmentDetail } from '../../../shared/types';
-import { ErrorNote, StatusBadge } from '../../components/ui';
+import { ErrorNote, SourceDot, StatusBadge } from '../../components/ui';
 import { api } from '../../lib/api';
-import { ARRIVAL_SOURCE_LABELS, STATUS_LABELS, arrivalLabel, formatDate, poLineLabel } from '../../lib/format';
+import {
+  ARRIVAL_SOURCE_LABELS,
+  STATUS_LABELS,
+  arrivalDataSource,
+  arrivalLabel,
+  formatDate,
+  formatDateTime,
+  poLineLabel,
+} from '../../lib/format';
+import { CHANGE_DOT, changeLabel } from '../../lib/progress';
 import { ESTIMATED_ARRIVAL_SOURCES } from '../../../shared/types';
 
 export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => void }) {
@@ -72,14 +81,19 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
               {row('Customer request (CRD)', formatDate(data.requestDate))}
               {row('Shipped (ETD)', formatDate(data.shipDate))}
               {row('Supplier ETA', formatDate(data.promisedArrivalDate))}
-              {row('Carrier ETA', formatDate(data.estimatedArrivalDate))}
+              {data.estimatedArrivalDate && row('Carrier ETA', <><SourceDot source="tracking" />{formatDate(data.estimatedArrivalDate)}</>)}
               {row(
                 'Arrived',
-                data.actualArrivalDate
-                  ? `${arrivalLabel(data)}${data.arrivalSource ? ` · ${ARRIVAL_SOURCE_LABELS[data.arrivalSource]}` : ''}`
-                  : null,
+                data.actualArrivalDate ? (
+                  <>
+                    <SourceDot source={arrivalDataSource(data)} />
+                    {arrivalLabel(data)}
+                    {data.arrivalSource ? ` · ${ARRIVAL_SOURCE_LABELS[data.arrivalSource]}` : ''}
+                  </>
+                ) : null,
               )}
             </dl>
+
 
             <section>
               <h3 className="mb-2 text-sm font-medium">Arrival</h3>
@@ -88,7 +102,14 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
                   {data.arrivalSource === 'report_window'
                     ? `Estimated: the line closed between the ${formatDate(data.arrivalWindowStart)} and ${formatDate(data.arrivalWindowEnd)} reports. `
                     : 'Assumed on the supplier ETA: the line was already closed in the first report it appeared in. '}
-                  Tracking data or a confirmed date replaces this estimate.
+                  Confirming the actual date below replaces this estimate.
+                </p>
+              )}
+              {data.arrivalSource === 'manual' && data.actualArrivalDate && (
+                <p className="mb-2 text-sm text-slate-500">
+                  <SourceDot source="manual" />
+                  Entered by {data.arrivalSetBy ?? 'unknown user'}
+                  {data.arrivalSetAt ? ` on ${formatDateTime(data.arrivalSetAt)}` : ''}.
                 </p>
               )}
               {data.actualArrivalDate && !(data.arrivalSource && ESTIMATED_ARRIVAL_SOURCES.includes(data.arrivalSource)) ? (
@@ -119,29 +140,32 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
               {setArrivalMutation.error && <div className="mt-2"><ErrorNote error={setArrivalMutation.error} /></div>}
             </section>
 
-            {data.promisedDateHistory.length > 0 && (
-              <section>
-                <h3 className="mb-2 text-sm font-medium">Promised date changes</h3>
-                <ul className="space-y-1 text-sm">
-                  {data.promisedDateHistory.map((h, i) => (
-                    <li key={i} className="text-slate-600 dark:text-slate-300">
-                      {formatDate(h.previousDate)} → {formatDate(h.newDate)}
-                      <span className="text-slate-500"> (report of {formatDate(h.changedAt)})</span>
+            <section>
+              <h3 className="mb-2 text-sm font-medium">Progress across uploads</h3>
+              {data.progress.length === 0 ? (
+                <p className="text-sm text-slate-500">No changes recorded yet.</p>
+              ) : (
+                <ol className="space-y-2.5">
+                  {data.progress.map((p, i) => (
+                    <li key={i} className="flex gap-3 text-sm">
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${CHANGE_DOT[p.kind]}`} aria-hidden />
+                      <div>
+                        <div>{changeLabel(p)}</div>
+                        <div className="text-xs text-slate-500">{formatDate(p.reportDate)} report</div>
+                      </div>
                     </li>
                   ))}
-                </ul>
-              </section>
-            )}
+                </ol>
+              )}
+            </section>
 
-            <section>
-              <h3 className="mb-2 text-sm font-medium">Tracking history</h3>
-              {data.events.length === 0 ? (
-                <p className="text-sm text-slate-500">No tracking events yet. Carrier tracking will be added in a later phase.</p>
-              ) : (
+            {data.events.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-sm font-medium">Carrier scans</h3>
                 <ol className="space-y-3 border-l border-slate-200 pl-4 dark:border-slate-800">
                   {data.events.map((e) => (
                     <li key={e.id} className="text-sm">
-                      <div className="font-medium">{e.description ?? STATUS_LABELS[e.status]}</div>
+                      <div className="font-medium"><SourceDot source="tracking" />{e.description ?? STATUS_LABELS[e.status]}</div>
                       <div className="text-slate-500">
                         {new Date(e.occurredAt).toLocaleString()}
                         {e.location && ` · ${e.location}`}
@@ -149,8 +173,8 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
                     </li>
                   ))}
                 </ol>
-              )}
-            </section>
+              </section>
+            )}
           </div>
         )}
       </aside>

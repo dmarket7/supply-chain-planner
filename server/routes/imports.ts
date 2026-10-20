@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import { baseDedupeKey } from '../../shared/importKeys';
 import { importRowsSchema, startImportSchema, type ImportResult } from '../../shared/types';
 import { getDb } from '../db/client';
-import { imports, promisedDateHistory, shipments, suppliers } from '../db/schema';
+import { imports, lineChanges, promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
-import { planImport } from '../importPlan';
+import { planImport, poLineKey } from '../importPlan';
+import { progressCounts } from '../progress';
 import { chunk } from './common';
 
 export const importsRoutes = new Hono<AppEnv>();
@@ -87,10 +88,24 @@ importsRoutes.post('/:id/rows', async (c) => {
       arrivalWindowEnd: shipments.arrivalWindowEnd,
       lastSeenOpenReportDate: shipments.lastSeenOpenReportDate,
       lastTrackedAt: shipments.lastTrackedAt,
+      shipDate: shipments.shipDate,
+      trackingNumber: shipments.trackingNumber,
     })
     .from(shipments)
     .where(inArray(shipments.dedupeKey, rows.map((r) => r.dedupeKey)));
-  const plan = planImport(rows, existing, imp.reportDate);
+
+  // PO lines an earlier report listed as awaiting shipment: a new ASN line for one of them has just shipped.
+  const known = new Set(existing.map((e) => e.dedupeKey));
+  const newAsnPos = [...new Set(rows.filter((r) => r.asn && r.poNumber && !known.has(r.dedupeKey)).map((r) => r.poNumber!))];
+  const awaiting = newAsnPos.length
+    ? await db
+        .select({ poNumber: shipments.poNumber, lineRef: shipments.lineRef })
+        .from(shipments)
+        .where(and(eq(shipments.status, 'awaiting_shipment'), inArray(shipments.poNumber, newAsnPos)))
+    : [];
+  const awaitingPoLines = new Set(awaiting.map((a) => poLineKey(a)).filter((k): k is string => !!k));
+
+  const plan = planImport(rows, existing, imp.reportDate, awaitingPoLines);
 
   const upsert = db
     .insert(shipments)
@@ -180,8 +195,23 @@ importsRoutes.post('/:id/rows', async (c) => {
     })
     .where(eq(imports.id, importId));
 
+  // Progress log; new lines get their id from the upsert above, so join on the dedupe key.
+  const changeLog = chunk(plan.changes, 500).map((part) =>
+    db.execute(sql`
+      insert into ${lineChanges} (shipment_id, import_id, report_date, kind, from_value, to_value)
+      select s.id, ${importId}, ${imp.reportDate}::date, c.kind, c.from_value, c.to_value
+      from json_to_recordset(${JSON.stringify(part.map((ch) => ({ dedupe_key: ch.dedupeKey, kind: ch.kind, from_value: ch.from, to_value: ch.to })))}::json)
+        as c(dedupe_key text, kind text, from_value text, to_value text)
+      join ${shipments} s on s.dedupe_key = c.dedupe_key`),
+  );
+
   // db.batch runs the statements in one transaction over the HTTP driver.
-  await db.batch([upsert, counters, ...chunk(history, 500).map((part) => db.insert(promisedDateHistory).values(part))]);
+  await db.batch([
+    upsert,
+    counters,
+    ...chunk(history, 500).map((part) => db.insert(promisedDateHistory).values(part)),
+    ...changeLog,
+  ]);
 
   return c.json({ inserted: plan.insertCount, updated: plan.updateCount });
 });
@@ -197,16 +227,39 @@ importsRoutes.post('/:id/complete', async (c) => {
   if (!imp) return c.json({ error: 'Import not found' }, 404);
 
   if (!imp.completedAt) {
-    const removed = await db
-      .delete(shipments)
-      .where(and(eq(shipments.status, 'awaiting_shipment'), ne(shipments.lastImportId, importId)))
-      .returning({ id: shipments.id });
+    const stale = and(eq(shipments.status, 'awaiting_shipment'), ne(shipments.lastImportId, importId));
+    // Before dropping an awaiting line that has shipped, copy its history (e.g. "first listed") onto the
+    // line(s) now listed under an ASN for the same PO line, so the timeline starts at the order.
+    const carryOver = db.execute(sql`
+      insert into ${lineChanges} (shipment_id, import_id, report_date, kind, from_value, to_value)
+      select shipped.id, lc.import_id, lc.report_date, lc.kind, lc.from_value, lc.to_value
+      from ${lineChanges} lc
+      join ${shipments} old on old.id = lc.shipment_id
+      join ${shipments} shipped on shipped.po_number = old.po_number
+        and coalesce(shipped.line_ref, '') = coalesce(old.line_ref, '')
+        and shipped.id <> old.id
+        and shipped.last_import_id = ${importId}
+      where old.status = 'awaiting_shipment' and old.last_import_id <> ${importId}`);
+    const [, removed] = await db.batch([
+      carryOver,
+      db.delete(shipments).where(stale).returning({ id: shipments.id }),
+    ]);
     await db
       .update(imports)
       .set({ completedAt: new Date(), removedAwaiting: removed.length })
       .where(eq(imports.id, importId));
     imp.removedAwaiting = removed.length;
   }
+
+  const [[previous], progress] = await Promise.all([
+    db
+      .select({ reportDate: imports.reportDate })
+      .from(imports)
+      .where(and(isNotNull(imports.completedAt), lt(imports.reportDate, imp.reportDate)))
+      .orderBy(desc(imports.reportDate))
+      .limit(1),
+    progressCounts(db, importId),
+  ]);
 
   const result: ImportResult = {
     importId,
@@ -215,6 +268,8 @@ importsRoutes.post('/:id/complete', async (c) => {
     promisedDateChanges: imp.promisedDateChanges,
     newlyClosed: imp.newlyClosed,
     removedAwaiting: imp.removedAwaiting,
+    progress,
+    previousReportDate: previous?.reportDate ?? null,
   };
   return c.json(result);
 });

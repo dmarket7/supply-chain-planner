@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, ilike, lte, or, sql, type SQL } from 'drizzle-
 import { z } from 'zod';
 import { SHIPMENT_STATUSES, type ShipmentDetail } from '../../shared/types';
 import { getDb } from '../db/client';
-import { promisedDateHistory, shipments, suppliers, trackingEvents } from '../db/schema';
+import { lineChanges, promisedDateHistory, shipments, suppliers, trackingEvents } from '../db/schema';
 import type { AppEnv } from '../env';
 import { branchFilter, shipmentColumns } from './common';
 
@@ -59,7 +59,7 @@ shipmentsRoutes.get('/:id', async (c) => {
     .where(eq(shipments.id, id));
   if (!shipment) return c.json({ error: 'Not found' }, 404);
 
-  const [events, history] = await Promise.all([
+  const [events, history, progress] = await Promise.all([
     db
       .select({
         id: trackingEvents.id,
@@ -81,9 +81,20 @@ shipmentsRoutes.get('/:id', async (c) => {
       .from(promisedDateHistory)
       .where(eq(promisedDateHistory.shipmentId, id))
       .orderBy(asc(promisedDateHistory.changedAt)),
+    db
+      .select({
+        importId: lineChanges.importId,
+        reportDate: lineChanges.reportDate,
+        kind: lineChanges.kind,
+        from: lineChanges.fromValue,
+        to: lineChanges.toValue,
+      })
+      .from(lineChanges)
+      .where(eq(lineChanges.shipmentId, id))
+      .orderBy(asc(lineChanges.reportDate), asc(lineChanges.id)),
   ]);
 
-  const detail = { ...shipment, events, promisedDateHistory: history };
+  const detail = { ...shipment, events, promisedDateHistory: history, progress };
   return c.json(detail as unknown as ShipmentDetail);
 });
 
@@ -105,6 +116,8 @@ shipmentsRoutes.patch('/:id/arrival', async (c) => {
       arrivalWindowStart: null,
       arrivalWindowEnd: null,
       status: actualArrivalDate ? 'delivered' : 'pending',
+      arrivalSetBy: actualArrivalDate ? c.get('userLabel') : null,
+      arrivalSetAt: actualArrivalDate ? new Date() : null,
       updatedAt: new Date(),
     })
     .where(eq(shipments.id, Number(c.req.param('id'))))
