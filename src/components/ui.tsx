@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
-import type { ShipmentStatus } from '../../shared/types';
+import type { LineTracking, ShipmentStatus } from '../../shared/types';
 import {
   DATA_SOURCE_DESCRIPTIONS,
   DATA_SOURCE_DOT,
   DATA_SOURCE_LABELS,
   STATUS_LABELS,
   STATUS_STYLES,
+  TRACKING_LABEL_STYLE,
+  trackingLabelText,
   type DataSource,
 } from '../lib/format';
 
@@ -93,5 +95,18 @@ export function SourceLegend({ sources, extra }: { sources: DataSource[]; extra?
       ))}
       {extra}
     </div>
+  );
+}
+
+/** How a line is tracked (provider route / registration state). */
+export function TrackingBadge({ tracking }: { tracking: LineTracking | undefined }) {
+  if (!tracking || tracking.label === 'no_tracking') return <span className="text-xs text-slate-400">—</span>;
+  return (
+    <span
+      title={tracking.reason ?? tracking.registration?.lastError ?? undefined}
+      className={`inline-block whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium ${TRACKING_LABEL_STYLE[tracking.label]}`}
+    >
+      {trackingLabelText(tracking)}
+    </span>
   );
 }

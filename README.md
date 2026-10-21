@@ -98,13 +98,64 @@ Lines in uploads made before this log existed get a reconstructed history: when 
 
 ## Carrier tracking
 
-Each carrier gets its own API connection behind the `TrackingProvider` interface (`server/tracking/`), enabled by its own secrets in `registry.ts`. When at least one is configured, the Shipments page shows **Refresh tracking**, **Confirm estimated arrivals**, a tracking filter and the refresh history, and a line's detail panel gets **Look up now**. Values from tracking get a cyan dot.
+Two kinds of tracking providers sit behind the `TrackingProvider` interface (`server/tracking/`), each enabled by its own secrets in `registry.ts`:
 
-How refreshing works for every carrier:
+- **Direct carrier APIs** (FedEx): look up any number of their carrier, no registration.
+- **TrackingMore** (multi-carrier aggregator): tracks a number only after it is **registered** with TrackingMore, and each registration uses one credit. Retrieving registered numbers is free.
 
-- Only lines whose carrier has a connection are looked up. Each distinct tracking number is looked up once and applied to every PO line that shares it, at most every 6 hours, in batches of 20.
-- A delivery from tracking replaces report-based estimates but never a date entered by hand. A delivery dated before the line's ship date is ignored (carriers reuse numbers).
+When a provider is configured, the Shipments page shows **Refresh tracking**, **Confirm estimated arrivals**, a tracking filter, a tracking badge per line and the refresh history, and a line's detail panel gets its carrier tracking details and actions. The **Carrier tracking** page manages TrackingMore. Values from tracking get a cyan dot.
+
+How refreshing works for every provider:
+
+- Refresh works on **tracking identities**: a TrackingMore registration, or tracking number + carrier for direct APIs. Several PO lines sharing a number are one identity; the same number under another courier, or reused by a carrier for a later shipment, is a different one. Each identity goes to exactly one provider, at most every 6 hours, in batches of 20.
+- Only lines whose carrier has a direct API, or that are linked to a registration still being tracked, are looked up. Unregistered, unresolved and unsupported carriers are skipped.
+- Each scan is stored once (`tracking_events.event_key`), so repeated syncs add nothing and don't count as changes; late, older scans are kept without moving "latest scan" backwards.
+- A delivery from tracking replaces report-based estimates but never a date entered by hand, and never the supplier's promise. A delivery dated before the line's ship date is ignored (carriers reuse numbers). "Delivered" without a delivery time is recorded as a warning, not turned into an arrival date. A failed lookup never erases an ETA, scans or a delivery date.
 - Scheduled refresh: Pages Functions can't run on cron, so add a small Worker with a Cron Trigger that calls `refreshTracking()` in a loop.
+
+### TrackingMore
+
+API V4 (`https://api.trackingmore.com/v4`, header `Tracking-Api-Key`), implemented in `server/tracking/trackingmore/` with `fetch`. Response formats follow TrackingMore's official SDKs (`github.com/TrackingMore-API`): a `{ meta: { code, message }, data }` envelope; `4101` = already registered, `4102` = never registered, `4110`/`4120` = invalid number/courier, `4190` = quota used up, `401`/`403` = bad key, `429` = rate limited.
+
+**Configure**
+
+1. Create a TrackingMore account and API key.
+2. Locally, add to `.dev.vars`: `TRACKINGMORE_API_KEY=…` and `TRACKINGMORE_ENABLED=true`. In production:
+   ```sh
+   pnpm wrangler pages secret put TRACKINGMORE_API_KEY
+   pnpm wrangler pages secret put TRACKINGMORE_ENABLED   # true
+   ```
+   `/api/health` shows `"TRACKINGMORE": "ok"`. The key only lives on the server; neither the health check nor `/api/tracking/status` returns it. Setting `TRACKINGMORE_ENABLED` to anything else switches TrackingMore off without removing the key.
+3. Check courier coverage with the real courier list (read-only, no credits):
+   ```sh
+   pnpm trackingmore:couriers                       # candidates for DSV, Expeditors, DHL, …
+   pnpm trackingmore:couriers --detect CWF12345678901 PNS12345678
+   ```
+
+**Use**
+
+1. **Carrier tracking → Sync from TrackingMore** stores the courier list (free).
+2. In **Carrier coverage**, confirm the courier for each carrier. Generic values (Forwarder, Truck, Air cargo) are never mapped as a whole: forwarder references are split by prefix (`Forwarder · CWF…`) so each prefix can be mapped to its forwarder, or marked **Not supported**. Courier codes are only ever picked from TrackingMore's own list; matches are suggested, and ambiguous ones (e.g. DHL Express vs DHL eCommerce, FedEx vs FedEx Freight) must be chosen. A single shipment can also get its own courier from its detail panel (with TrackingMore's **Detect**); that choice applies to every line with the same number and carrier.
+3. **Register with TrackingMore**: pick shipments not arrived yet, or arrivals estimated from reports in the last 7–90 days. The preview shows how many new tracking numbers would be registered (= credits), lines that will only be linked to existing registrations (free), and what can't be tracked. Registering needs an explicit confirmation. Single shipments can be registered from their detail panel.
+4. **Shipments → Refresh tracking** then fetches updates for registered numbers (free).
+
+**Registration states** (`provider_trackings.state`) and how they show:
+
+| State | Shown as | Meaning |
+|---|---|---|
+| (no registration) | Not registered | Courier known, not sent to TrackingMore yet |
+| `registering` | Registered · awaiting data | Being sent right now |
+| `awaiting_data` | Registered · awaiting data | Registered; no carrier scan yet (normal for the first hours) |
+| `active` | Tracking active | TrackingMore returns tracking data |
+| `unavailable` | Tracking unavailable | Still nothing 14 days after registering, or rejected as invalid |
+| `expired` | Tracking expired | TrackingMore stopped tracking it |
+| `register_failed`, `missing`, `conflict` | Tracking API error | Failed registration (retryable), deleted at TrackingMore (register again), or a reused number TrackingMore already tracks for an earlier shipment |
+
+A recent sync error also shows as **Tracking API error**, so a failed call is never mistaken for "no data".
+
+**Idempotency.** An identity is unique per provider + courier + number + episode (ship dates more than 120 days apart are separate episodes). Registration claims rows atomically, so double clicks, retries and two users at once never register an identity twice. If a request dies after TrackingMore accepted it, the stale claim is retried after 10 minutes and TrackingMore answers "already exists", which costs no credit.
+
+**Status mapping**: `inforeceived` → Pending; `pending` → Pending once there are scans, otherwise no change; `transit` → In transit; `pickup` → Out for delivery; `delivered` → Delivered; `undelivered`/`exception` → Exception; `notfound` and `expired` leave the line's status alone. The raw status and substatus are kept on the registration.
 
 ### FedEx
 
@@ -134,4 +185,5 @@ FedEx keeps tracking history for about 90 days after delivery, so older closed l
 | `pnpm typecheck` | TypeScript |
 | `pnpm db:generate` | New migration after editing `server/db/schema.ts` |
 | `pnpm db:studio` | Browse the DB |
+| `pnpm trackingmore:couriers [names] [--detect numbers]` | TrackingMore courier coverage with the key in `.dev.vars` (read-only, no credits) |
 | `pnpm fedex:check <number> [ship date]` | Look up FedEx numbers with the keys in `.dev.vars`, without touching the DB |

@@ -143,7 +143,11 @@ export function resolveLineTracking(
   if (rule?.status === 'unsupported') return label('unsupported', { reason: `${describeKey(key)} is marked as not supported` });
   if (rule?.courierCode) return registered(rule.courierCode, 'mapping');
   if (isGenericCarrier(line.carrier)) {
-    return label('unresolved', { reason: `${describeKey(key)} is not a specific carrier; choose the courier for this shipment or prefix` });
+    return label('unresolved', {
+      reason: key.prefix
+        ? `${describeKey(key)} is not a specific carrier; choose the courier for this prefix or this shipment`
+        : `${describeKey(key)} is not a specific carrier; choose the courier for this shipment`,
+    });
   }
   return label('unresolved', { reason: `${describeKey(key)} has no confirmed courier yet` });
 }

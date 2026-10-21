@@ -8,6 +8,7 @@ import { useSession } from './session';
 const InboundByDayPage = lazy(() => import('../features/inbound/InboundByDayPage').then((m) => ({ default: m.InboundByDayPage })));
 const ShipmentsPage = lazy(() => import('../features/shipments/ShipmentsPage').then((m) => ({ default: m.ShipmentsPage })));
 const ArrivalLogPage = lazy(() => import('../features/arrivals/ArrivalLogPage').then((m) => ({ default: m.ArrivalLogPage })));
+const TrackingSetupPage = lazy(() => import('../features/tracking/TrackingSetupPage').then((m) => ({ default: m.TrackingSetupPage })));
 const ImportPage = lazy(() => import('../features/import/ImportPage').then((m) => ({ default: m.ImportPage })));
 
 export function App() {
@@ -28,6 +29,7 @@ export function App() {
         <Route index element={<InboundByDayPage />} />
         <Route path="shipments" element={<ShipmentsPage />} />
         <Route path="arrivals" element={<ArrivalLogPage />} />
+        <Route path="tracking" element={<TrackingSetupPage />} />
         <Route path="import" element={<ImportPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

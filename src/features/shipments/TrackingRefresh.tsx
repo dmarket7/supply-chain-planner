@@ -9,7 +9,9 @@ type Scope = 'open' | 'estimated';
 
 export interface TrackingStatus {
   configured: boolean;
-  providers: { name: string; carriers: string[] }[];
+  providers: { name: string; kind: 'direct' | 'registered'; carriers: string[] }[];
+  /** off | disabled | missing_key | ok */
+  trackingMore: 'off' | 'disabled' | 'missing_key' | 'ok';
 }
 
 /** Which carrier connections the server has (FedEx, …). */
@@ -17,9 +19,9 @@ export function useTrackingStatus() {
   return useQuery({ queryKey: ['tracking-status'], queryFn: () => api<TrackingStatus>('/tracking/status'), staleTime: 5 * 60_000 });
 }
 
-/** "FedEx" or "FedEx and DHL": the carriers tracking covers, for labels. */
+/** "FedEx" or "FedEx and TrackingMore": the providers tracking uses, for labels. */
 export function carrierList(status: TrackingStatus | undefined): string {
-  const names = [...new Set(status?.providers.flatMap((p) => p.carriers) ?? [])];
+  const names = [...new Set(status?.providers.flatMap((p) => (p.kind === 'registered' ? ['TrackingMore'] : p.carriers)) ?? [])];
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? 'carrier');
 }
 
@@ -139,7 +141,7 @@ export function useTrackingRefresh() {
           </button>
         ) : (
           <>
-            <button onClick={() => void run('open')} className={btn} title={`Look up ${carriers} tracking numbers of lines that have not arrived`}>
+            <button onClick={() => void run('open')} className={btn} title={`Look up tracking (${carriers}) for lines that have not arrived. Only registered TrackingMore numbers are checked; this uses no credits.`}>
               {SCOPE_LABELS.open}
             </button>
             <button
@@ -158,8 +160,8 @@ export function useTrackingRefresh() {
         {totals && (
           <p className="text-sm text-slate-500">
             {running ? `${SCOPE_LABELS[totals.scope]}… ` : ''}
-            Checked {totals.checked.toLocaleString()} {carriers} tracking numbers: {totals.found.toLocaleString()} found
-            {totals.notFound > 0 && `, ${totals.notFound.toLocaleString()} not found`}.{' '}
+            Checked {totals.checked.toLocaleString()} tracking numbers ({carriers}): {totals.found.toLocaleString()} with data
+            {totals.notFound > 0 && `, ${totals.notFound.toLocaleString()} without data`}.{' '}
             {totals.linesChanged.toLocaleString()} lines changed
             {totals.arrivalsConfirmed > 0 && `, ${totals.arrivalsConfirmed.toLocaleString()} arrivals confirmed`}.
             {totals.remaining > 0 && ` ${totals.remaining.toLocaleString()} still to check.`}

@@ -215,6 +215,11 @@ trackingSetupRoutes.put('/mappings', async (c) => {
   if (!body.success || (body.data.status === 'mapped') !== !!body.data.courierCode) return c.json({ error: 'Invalid mapping' }, 400);
   const { carrier, prefix, courierCode, status } = body.data;
   if (prefix && !isGenericCarrier(carrier)) return c.json({ error: 'Prefixes only apply to generic carriers such as Forwarder' }, 400);
+  // A generic carrier without a prefix (unknown carrier, numeric references) covers unrelated forwarders:
+  // never map it as a whole, only per shipment.
+  if (!prefix && isGenericCarrier(carrier) && status === 'mapped') {
+    return c.json({ error: 'Choose the courier per shipment', reason: `"${carrier}" lines without a reference prefix can belong to different carriers` }, 400);
+  }
   const db = getDb(c.env.DATABASE_URL);
   if (courierCode && !(await courierExists(db, courierCode))) {
     return c.json({ error: 'Unknown courier code', reason: 'sync the TrackingMore courier list and pick a code from it' }, 400);
