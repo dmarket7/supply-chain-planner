@@ -7,6 +7,7 @@ import {
   resolveLineTracking,
   type ResolveContext,
 } from '../server/tracking/couriers';
+import { isStalledRegistration, needsCarrierAccount } from '../shared/couriers';
 import type { TrackingRegistrationInfo } from '../shared/types';
 
 /** Stand-in for a courier list fetched from TrackingMore; codes here are test data, not real mappings. */
@@ -27,16 +28,32 @@ describe('courier candidates', () => {
     expect(courierCandidates('Expeditors', couriers).candidates[0].courierCode).toBe('expeditors');
   });
 
-  it('flags carriers with several services as ambiguous', () => {
+  it('flags carriers with several services as ambiguous, preselecting the single exact match', () => {
     const r = courierCandidates('DHL', couriers);
     expect(r.ambiguous).toBe(true);
-    expect(r.suggested).toBeNull();
+    expect(r.suggested).toBe('dhl');
     expect(r.candidates.map((c) => c.courierCode)).toEqual(expect.arrayContaining(['dhl', 'dhl-ecommerce', 'dhl-global-forwarding']));
   });
 
   it('keeps FedEx and FedEx Freight apart', () => {
     expect(courierCandidates('FedEx Freight', couriers).candidates[0].courierCode).toBe('fedex-freight');
-    expect(courierCandidates('FedEx', couriers)).toMatchObject({ ambiguous: true, suggested: null });
+    expect(courierCandidates('FedEx', couriers)).toMatchObject({ ambiguous: true, suggested: 'fedex' });
+  });
+
+  it('ranks "API" variants that need a carrier account after the standard service', () => {
+    const list = [
+      { courierCode: 'fedex-unified-api', name: 'FedEx API' },
+      { courierCode: 'fedex', name: 'FedEx' },
+      { courierCode: 'fedex-freight', name: 'Fedex Freight' },
+      { courierCode: 'ups-unified-api', name: 'UPS API' },
+      { courierCode: 'ups', name: 'UPS' },
+    ];
+    const r = courierCandidates('FedEx', list);
+    expect(r.suggested).toBe('fedex');
+    expect(r.candidates.map((c) => c.courierCode)).toEqual(['fedex', 'fedex-freight', 'fedex-unified-api']);
+    expect(courierCandidates('UPS', list).suggested).toBe('ups');
+    expect([needsCarrierAccount('fedex-unified-api'), needsCarrierAccount('dhl-api'), needsCarrierAccount('x', 'UPS API')]).toEqual([true, true, true]);
+    expect([needsCarrierAccount('fedex', 'FedEx'), needsCarrierAccount('apitrack', 'Apitrack')]).toEqual([false, false]);
   });
 
   it('returns nothing for generic carriers and unsupported names', () => {
@@ -96,6 +113,15 @@ describe('line routing', () => {
       courierSource: 'mapping',
     });
     expect(resolveLineTracking({ carrier: 'Forwarder', trackingNumber: 'CWF123456', courierOverride: null }, ctx, reg())).toMatchObject({ label: 'active', courierCode: 'dsv' });
+  });
+
+  it('warns that the courier may be wrong when a registration has no scans for hours', () => {
+    const line = { carrier: 'DSV', trackingNumber: 'X1', courierOverride: null };
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    expect(resolveLineTracking(line, ctx, reg({ state: 'awaiting_data', registeredAt: hoursAgo(8) }))).toMatchObject({ label: 'awaiting_data', reason: expect.stringContaining('courier may be wrong') });
+    expect(resolveLineTracking(line, ctx, reg({ state: 'awaiting_data', registeredAt: hoursAgo(1) })).reason).toBeNull();
+    expect(isStalledRegistration({ state: 'awaiting_data', registeredAt: hoursAgo(8), latestCheckpointAt: hoursAgo(9) })).toBe(false);
+    expect(isStalledRegistration({ state: 'active', registeredAt: hoursAgo(8), latestCheckpointAt: null })).toBe(false);
   });
 
   it('leaves other forwarder prefixes and unknown carriers unresolved, and honours "unsupported"', () => {

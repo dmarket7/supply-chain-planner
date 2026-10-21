@@ -4,6 +4,7 @@ import type { ShipmentDetail } from '../../../shared/types';
 import { ErrorNote, TrackingBadge } from '../../components/ui';
 import { api } from '../../lib/api';
 import { PROVIDER_NAMES, formatDate, formatDateTime } from '../../lib/format';
+import { CARRIER_ACCOUNT_NOTE, needsCarrierAccount } from '../../../shared/couriers';
 import { CourierPicker } from '../tracking/CourierPicker';
 import { useTrackingStatus } from './TrackingRefresh';
 
@@ -77,6 +78,7 @@ export function TrackingPanel({ shipment: s }: { shipment: ShipmentDetail }) {
             <span>
               {t.courierName ?? t.courierCode} <span className="font-mono text-xs text-slate-400">{t.courierCode}</span>
               <span className="block text-xs text-slate-500">{t.courierSource === 'override' ? 'chosen for this shipment' : 'from the carrier mapping'}</span>
+              {needsCarrierAccount(t.courierCode, t.courierName) && <span className="block max-w-56 text-xs text-amber-700 dark:text-amber-300">{CARRIER_ACCOUNT_NOTE}</span>}
             </span>,
           )}
         {reg && row('Provider status', [reg.lastProviderStatus, reg.lastProviderSubstatus].filter(Boolean).join(' · ') || null)}
@@ -124,7 +126,11 @@ export function TrackingPanel({ shipment: s }: { shipment: ShipmentDetail }) {
       {picking && (
         <div className="mt-3 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
           <p className="mb-2 text-xs text-slate-500">Applies to every PO line with tracking number {s.trackingNumber} from {s.carrier ?? 'this carrier'}.</p>
-          <CourierPicker detectNumber={s.trackingNumber} busy={override.isPending} onPick={(code) => override.mutate(code)} onCancel={() => setPicking(false)} />
+          <CourierPicker
+            detectNumber={s.trackingNumber}
+            current={t.courierCode}
+            notice={reg ? `Registered under ${reg.courierCode} now. Registering under another courier uses 1 credit.` : null}
+            busy={override.isPending} onPick={(code) => override.mutate(code)} onCancel={() => setPicking(false)} />
         </div>
       )}
 

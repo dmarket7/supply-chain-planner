@@ -1,3 +1,4 @@
+import { isStalledRegistration, needsCarrierAccount, STALLED_AFTER_HOURS } from '../../shared/couriers';
 import type { LineTracking, TrackingLabel, TrackingRegistrationInfo } from '../../shared/types';
 
 /**
@@ -78,13 +79,17 @@ export function courierCandidates(carrier: string | null, couriers: CourierOptio
       else if (` ${name} `.includes(` ${t} `)) score = Math.max(score, 50);
       else if (code.startsWith(t)) score = Math.max(score, 40);
     }
+    // "API" variants need a carrier account in TrackingMore: list them, but after the standard services.
+    if (score && needsCarrierAccount(c.courierCode, c.name)) score = Math.min(score, 30);
     if (score) candidates.push({ ...c, score });
   }
   candidates.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   const top = candidates[0];
   const contenders = top ? candidates.filter((c) => c.score >= 70) : [];
   const ambiguous = contenders.length > 1 || (!!top && top.score < 100);
-  return { candidates: candidates.slice(0, 15), suggested: top && top.score === 100 && contenders.length <= 1 ? top.courierCode : null, ambiguous };
+  // A single exact match (DHL -> dhl) is preselected even next to variants (dhl-germany, …); the user still confirms.
+  const exact = candidates.filter((c) => c.score === 100);
+  return { candidates: candidates.slice(0, 15), suggested: exact.length === 1 ? exact[0].courierCode : null, ambiguous };
 }
 
 export interface CarrierMappingRule {
@@ -130,7 +135,11 @@ export function resolveLineTracking(
   const registered = (courierCode: string, courierSource: 'override' | 'mapping'): LineTracking => {
     const extra = { provider: ctx.registrationProvider, courierCode, courierName: ctx.courierNames.get(courierCode) ?? null, courierSource };
     if (!registration || registration.courierCode !== courierCode) return label('not_registered', { ...extra, registration: null });
-    return label(labelForRegistration(registration), extra);
+    const l = labelForRegistration(registration);
+    if (l === 'awaiting_data' && isStalledRegistration(registration)) {
+      return label(l, { ...extra, reason: `No scans more than ${STALLED_AFTER_HOURS} hours after registration; the courier may be wrong. Compare with Detect and change it if needed.` });
+    }
+    return label(l, extra);
   };
 
   if (line.courierOverride && ctx.registrationProvider) return registered(line.courierOverride, 'override');
