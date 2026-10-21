@@ -48,6 +48,8 @@ export const shipmentColumns = {
   lastEventAt: shipments.lastEventAt,
   arrivalSetBy: shipments.arrivalSetBy,
   arrivalSetAt: shipments.arrivalSetAt,
+  courierOverride: shipments.courierOverride,
+  trackingRegistrationId: shipments.trackingRegistrationId,
   /** Changes from the latest upload that changed this line (uses line_changes_shipment_idx). */
   latestChange: sql<Shipment['latestChange']>`(
     select json_build_object(

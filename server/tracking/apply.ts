@@ -31,6 +31,8 @@ const RECYCLED_TOLERANCE_DAYS = 2;
  * (report window / ETA-assumed) but never a date someone entered by hand.
  */
 export function applyTrackingResult(line: TrackedLine, result: TrackingResult): LineUpdate {
+  // A lookup without an ETA (or a failed one) never erases the one we had.
+  const eta = result.estimatedArrivalDate ?? line.estimatedArrivalDate ?? null;
   const manual = line.arrivalSource === 'manual' && !!line.actualArrivalDate;
   const deliveredOn = result.deliveredAt?.slice(0, 10) ?? null;
   let ignoredDelivery: string | null = null;
@@ -43,7 +45,7 @@ export function applyTrackingResult(line: TrackedLine, result: TrackingResult): 
   if (manual) {
     return {
       status: 'delivered',
-      estimatedArrivalDate: result.estimatedArrivalDate ?? null,
+      estimatedArrivalDate: eta,
       actualArrivalDate: line.actualArrivalDate,
       arrivalSource: 'manual',
       confirmedArrival: false,
@@ -53,7 +55,7 @@ export function applyTrackingResult(line: TrackedLine, result: TrackingResult): 
   if (acceptDelivery) {
     return {
       status: 'delivered',
-      estimatedArrivalDate: result.estimatedArrivalDate ?? null,
+      estimatedArrivalDate: eta,
       actualArrivalDate: deliveredOn,
       arrivalSource: 'tracking',
       confirmedArrival: true,
@@ -65,7 +67,7 @@ export function applyTrackingResult(line: TrackedLine, result: TrackingResult): 
     result.status && result.status !== 'delivered' ? result.status : line.actualArrivalDate ? 'delivered' : line.status;
   return {
     status,
-    estimatedArrivalDate: result.estimatedArrivalDate ?? null,
+    estimatedArrivalDate: eta,
     actualArrivalDate: line.actualArrivalDate,
     arrivalSource: line.arrivalSource,
     confirmedArrival: false,

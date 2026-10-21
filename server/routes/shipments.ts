@@ -5,6 +5,8 @@ import { SHIPMENT_STATUSES, type ShipmentDetail } from '../../shared/types';
 import { getDb } from '../db/client';
 import { lineChanges, promisedDateHistory, shipments, suppliers, trackingEvents } from '../db/schema';
 import type { AppEnv } from '../env';
+import { getProviders } from '../tracking/registry';
+import { attachTracking } from '../tracking/routing';
 import { branchFilter, shipmentColumns } from './common';
 
 export const shipmentsRoutes = new Hono<AppEnv>();
@@ -46,7 +48,7 @@ shipmentsRoutes.get('/', async (c) => {
     .where(and(...filters))
     .orderBy(sql`${expectedDate} asc nulls last`, asc(shipments.id))
     .limit(10000);
-  return c.json(rows);
+  return c.json(await attachTracking(db, getProviders(c.env), rows));
 });
 
 shipmentsRoutes.get('/:id', async (c) => {
@@ -94,7 +96,8 @@ shipmentsRoutes.get('/:id', async (c) => {
       .orderBy(asc(lineChanges.reportDate), asc(lineChanges.id)),
   ]);
 
-  const detail = { ...shipment, events, promisedDateHistory: history, progress };
+  const [tracked] = await attachTracking(db, getProviders(c.env), [shipment]);
+  const detail = { ...tracked, events, promisedDateHistory: history, progress };
   return c.json(detail as unknown as ShipmentDetail);
 });
 

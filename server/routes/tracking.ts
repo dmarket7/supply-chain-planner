@@ -4,14 +4,15 @@ import { z } from 'zod';
 import { getDb } from '../db/client';
 import { trackingRuns } from '../db/schema';
 import type { AppEnv } from '../env';
-import { getProviders } from '../tracking/registry';
+import { getProviders, trackingMoreConfig } from '../tracking/registry';
 import { refreshTracking } from '../tracking/refresh';
 
 export const trackingRoutes = new Hono<AppEnv>();
 
 trackingRoutes.get('/status', (c) => {
-  const providers = getProviders(c.env).map((p) => ({ name: p.name, carriers: p.carriers }));
-  return c.json({ configured: providers.length > 0, providers });
+  const providers = getProviders(c.env).map((p) => ({ name: p.name, kind: p.kind, carriers: p.carriers }));
+  // Configuration state only; the API key itself is never returned.
+  return c.json({ configured: providers.length > 0, providers, trackingMore: trackingMoreConfig(c.env).state });
 });
 
 const refreshSchema = z
@@ -31,7 +32,7 @@ trackingRoutes.post('/refresh', async (c) => {
   if (!body.success) return c.json({ error: 'Invalid request' }, 400);
   const providers = getProviders(c.env);
   if (!providers.length) {
-    return c.json({ error: 'Tracking is not configured', reason: 'no carrier API connections yet' }, 503);
+    return c.json({ error: 'Tracking is not configured', reason: 'no tracking provider is enabled (FedEx keys or TRACKINGMORE_ENABLED)' }, 503);
   }
   const db = getDb(c.env.DATABASE_URL);
   let runId = body.data.runId;
