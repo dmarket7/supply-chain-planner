@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p .",
     "sample:xlsx": "node scripts/make-sample.mjs",
     "fedex:check": "tsx scripts/fedex-check.ts",
+    "trackingmore:couriers": "tsx scripts/trackingmore-couriers.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"

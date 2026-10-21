@@ -171,6 +171,82 @@ export interface Shipment {
   arrivalSetAt: string | null;
   /** Changes made by the most recent upload that changed this line. */
   latestChange: { importId: number | null; reportDate: string; changes: LineChange[] } | null;
+  /** User-confirmed provider courier code for this line (overrides the carrier mapping). */
+  courierOverride: string | null;
+  providerTrackingId: number | null;
+  /** Filled in by the API: how this line is tracked. */
+  tracking?: LineTracking;
+}
+
+/**
+ * Lifecycle of a tracking number registered with a provider that needs registration (TrackingMore):
+ * - registering: claimed by a request that is sending it now (guards against double registration)
+ * - awaiting_data: registered; the carrier has not returned any scans yet (normal for the first hours)
+ * - active: the provider returns tracking data
+ * - unavailable: still no data long after registration (wrong courier or number not in the carrier's system)
+ * - expired: the provider stopped tracking it (no updates for a long time)
+ * - invalid: the provider rejected the number or courier code
+ * - register_failed: registration did not go through (temporary error, quota); can be retried
+ * - missing: the provider no longer has it (deleted on their side); can be registered again
+ * - conflict: the provider already tracks an earlier shipment with this reused number
+ */
+export const REGISTRATION_STATES = [
+  'registering',
+  'awaiting_data',
+  'active',
+  'unavailable',
+  'expired',
+  'invalid',
+  'register_failed',
+  'missing',
+  'conflict',
+] as const;
+export type RegistrationState = (typeof REGISTRATION_STATES)[number];
+
+/** How a line is (or isn't) tracked, as shown in the UI. */
+export const TRACKING_LABELS = [
+  'no_tracking',
+  'direct',
+  'unresolved',
+  'unsupported',
+  'not_registered',
+  'awaiting_data',
+  'active',
+  'unavailable',
+  'expired',
+  'api_error',
+] as const;
+export type TrackingLabel = (typeof TRACKING_LABELS)[number];
+
+export interface TrackingRegistrationInfo {
+  id: number;
+  provider: string;
+  courierCode: string;
+  state: RegistrationState;
+  registeredAt: string | null;
+  lastSyncedAt: string | null;
+  lastSuccessAt: string | null;
+  lastProviderStatus: string | null;
+  lastProviderSubstatus: string | null;
+  latestEvent: string | null;
+  latestCheckpointAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  lastWarning: string | null;
+}
+
+/** Tracking route of one line: which provider handles it and with which courier. */
+export interface LineTracking {
+  label: TrackingLabel;
+  /** fedex (direct) or trackingmore; null when no provider handles the line. */
+  provider: string | null;
+  courierCode: string | null;
+  courierName: string | null;
+  /** Where the courier code came from: a per-line override or the carrier mapping. */
+  courierSource: 'override' | 'mapping' | null;
+  /** Why the line can't be tracked, for unresolved/unsupported lines. */
+  reason: string | null;
+  registration: TrackingRegistrationInfo | null;
 }
 
 export interface TrackingRun {

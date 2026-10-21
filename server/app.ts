@@ -8,9 +8,22 @@ import { progressRoutes } from './routes/progress';
 import { reportsRoutes } from './routes/reports';
 import { shipmentsRoutes } from './routes/shipments';
 import { trackingRoutes } from './routes/tracking';
-import { fedexEnvironment } from './tracking/registry';
+import { fedexEnvironment, trackingMoreConfig } from './tracking/registry';
 
 export const app = new Hono<AppEnv>().basePath('/api');
+
+function describeTrackingMore(env: Env): string {
+  switch (trackingMoreConfig(env).state) {
+    case 'off':
+      return 'not set (TrackingMore off)';
+    case 'disabled':
+      return 'key set, TRACKINGMORE_ENABLED is not "true" (off)';
+    case 'missing_key':
+      return 'TRACKINGMORE_ENABLED is true but TRACKINGMORE_API_KEY is missing';
+    case 'ok':
+      return 'ok';
+  }
+}
 
 function describeFedEx(env: Env): string {
   const id = !!env.FEDEX_CLIENT_ID?.trim();
@@ -34,6 +47,7 @@ app.get('/health', (c) => {
         DATABASE_URL: databaseOk ? 'ok' : 'DATABASE_URL is missing or not a postgresql:// connection string',
         // Optional carrier connections.
         FEDEX: describeFedEx(c.env),
+        TRACKINGMORE: describeTrackingMore(c.env),
       },
     },
     ok ? 200 : 500,

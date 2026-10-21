@@ -23,6 +23,8 @@ export interface NormalizedRow {
 
 const NAMED_CARRIERS: [RegExp, string, ShipmentMode][] = [
   [/^(ups|united parcel)/i, 'UPS', 'parcel'],
+  // Before FedEx: LTL freight is a separate FedEx service with its own tracking.
+  [/^(fedex|fed ex)\s*freight/i, 'FedEx Freight', 'freight'],
   [/^(fedex|fed ex|federal express)/i, 'FedEx', 'parcel'],
   [/^(usps|us postal|u\.s\. postal|united states postal|postal service)/i, 'USPS', 'parcel'],
   [/^dhl/i, 'DHL', 'parcel'],
@@ -30,6 +32,11 @@ const NAMED_CARRIERS: [RegExp, string, ShipmentMode][] = [
   [/^amazon/i, 'Amazon', 'parcel'],
   [/^dsv/i, 'DSV', 'freight'],
   [/^(k\s*&\s*n|k\+n|kuehne)/i, 'Kuehne+Nagel', 'freight'],
+  [/^expeditors/i, 'Expeditors', 'freight'],
+  [/^sinotrans/i, 'Sinotrans', 'freight'],
+  [/^lotte/i, 'LOTTE Global Logistics', 'freight'],
+  [/^say\s*cargo/i, 'Say Cargo', 'freight'],
+  [/^jtc\b/i, 'JTC Express', 'freight'],
 ];
 
 /** IATA airline prefixes seen on air waybills ("297-73979334"). Unknown prefixes show as "Air cargo". */

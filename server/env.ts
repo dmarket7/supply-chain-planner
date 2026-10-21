@@ -6,6 +6,10 @@ export interface Env {
   FEDEX_CLIENT_SECRET?: string;
   /** `sandbox` (default) or `production`. */
   FEDEX_ENV?: string;
+  /** TrackingMore API V4 key (server-side only). */
+  TRACKINGMORE_API_KEY?: string;
+  /** `true` to use TrackingMore; lets the key be stored while the integration is switched off. */
+  TRACKINGMORE_ENABLED?: string;
 }
 
 export interface AppVariables {
