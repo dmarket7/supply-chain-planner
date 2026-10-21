@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CARRIER_ACCOUNT_NOTE, needsCarrierAccount, STALLED_AFTER_HOURS } from '../../../shared/couriers';
 import type { CoverageRow } from '../../../shared/types';
 import { useBranch } from '../../app/branch';
 import { Card, Empty, ErrorNote, PageHeader, tableCls, tdCls, thCls } from '../../components/ui';
@@ -181,6 +182,17 @@ function CoverageTable({ coverage, loading, error, canMap }: { coverage?: Covera
                         {r.courierName ?? r.courierCode} <span className="font-mono text-slate-400">{r.courierCode}</span>
                       </span>
                     )}
+                    {r.route === 'mapped' && r.courierCode && needsCarrierAccount(r.courierCode, r.courierName) && (
+                      <div className="mt-1 max-w-xs whitespace-normal text-xs text-amber-700 dark:text-amber-300">
+                        {CARRIER_ACCOUNT_NOTE}
+                        {r.candidates.find((c) => c.courierCode === r.suggested) && ` Standard tracking: ${r.suggested}.`}
+                      </div>
+                    )}
+                    {r.stalledRegistrations > 0 && (
+                      <div className="mt-1 max-w-xs whitespace-normal text-xs text-amber-700 dark:text-amber-300">
+                        {r.stalledRegistrations} registered number(s) have no scans after {STALLED_AFTER_HOURS} hours; the courier may be wrong.
+                      </div>
+                    )}
                     {r.route === 'unresolved' && r.ambiguous && r.candidates.length > 1 && (
                       <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">Several services match; pick the right one.</div>
                     )}
@@ -192,6 +204,9 @@ function CoverageTable({ coverage, loading, error, canMap }: { coverage?: Covera
                       <CourierPicker
                         candidates={r.candidates}
                         suggested={r.suggested}
+                        current={r.courierCode}
+                        detectNumber={r.sampleNumber}
+                        notice={changeNotice(r)}
                         busy={save.isPending}
                         onCancel={() => setEditing(null)}
                         onPick={(code) => save.mutate({ carrier: r.carrier, prefix: r.prefix, courierCode: code, status: 'mapped' })}
@@ -232,6 +247,12 @@ function CoverageTable({ coverage, loading, error, canMap }: { coverage?: Covera
       {(save.error || clear.error) && <div className="p-4"><ErrorNote error={save.error ?? clear.error} /></div>}
     </Card>
   );
+}
+
+/** What switching a row's courier does to its existing registrations. */
+export function changeNotice(r: CoverageRow) {
+  if (!r.courierCode || !r.registrations) return null;
+  return `${r.registrations} number(s) are registered under ${r.courierCode}. Switching unlinks them; registering them under the new courier uses up to ${r.registrations} credit(s). The old trackings stay in your TrackingMore account.`;
 }
 
 function RegistrationCard({ enabled }: { enabled: boolean }) {

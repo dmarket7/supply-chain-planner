@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { CoverageRow, LineTracking, ShipmentDetail } from '../shared/types';
 import { BranchProvider } from '../src/app/branch';
 import { TrackingPanel } from '../src/features/shipments/TrackingPanel';
-import { TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
+import { changeNotice, TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
 
 /** Server-side render with React Query's cache pre-filled (no network); checks the screens render the right states. */
 function render(node: ReturnType<typeof h>, data: [unknown[], unknown][]) {
@@ -33,6 +33,9 @@ const row = (over: Partial<CoverageRow>): CoverageRow => ({
   numbers: 6,
   registeredLines: 0,
   overrideLines: 0,
+  registrations: 0,
+  stalledRegistrations: 0,
+  sampleNumber: null,
   route: 'unresolved',
   provider: null,
   courierCode: null,
@@ -86,6 +89,22 @@ describe('Carrier tracking page', () => {
     expect(html).toContain('New tracking numbers to register');
     expect(html).toMatch(/uses up to <!-- -->7<!-- --> TrackingMore credit/);
     expect(html).toContain('Forwarder · PNS… (4)');
+  });
+});
+
+describe('Changing a carrier\'s courier', () => {
+  it('flags "API" couriers and stalled registrations, and says what switching costs', () => {
+    const mapped = row({ carrier: 'FedEx', label: 'FedEx', route: 'mapped', provider: 'trackingmore', courierCode: 'fedex-unified-api', courierName: 'FedEx API', registrations: 3, stalledRegistrations: 3, suggested: 'fedex', candidates: [{ courierCode: 'fedex', name: 'FedEx' }] });
+    const html = render(h(TrackingSetupPage), [
+      [['tracking-status'], { ...status, providers: [{ name: 'trackingmore', kind: 'registered', carriers: [] }] }],
+      [['tracking-coverage', ''], { registrationProvider: 'trackingmore', courierList: { count: 1701, syncedAt: '2026-10-21T10:00:00Z' }, rows: [mapped] }],
+    ]);
+    expect(html).toContain('Needs your own carrier account');
+    expect(html).toContain('Standard tracking: fedex');
+    expect(html).toMatch(/3<!-- --> registered number\(s\) have no scans/);
+    expect(html).toContain('Change courier');
+    expect(changeNotice(mapped)).toContain('uses up to 3 credit(s)');
+    expect(changeNotice({ ...mapped, registrations: 0 })).toBeNull();
   });
 });
 

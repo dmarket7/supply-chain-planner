@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { and, count, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { STALLED_AFTER_HOURS } from '../../shared/couriers';
 import type { CoverageRow } from '../../shared/types';
 import { getDb, type Db } from '../db/client';
 import { carrierMappings, providerCouriers, providerTrackings, shipments } from '../db/schema';
@@ -144,8 +145,13 @@ trackingSetupRoutes.get('/coverage', async (c) => {
       numbers: sql<number>`count(distinct ${shipments.trackingNumber})::int`,
       registeredLines: sql<number>`count(${shipments.trackingRegistrationId})::int`,
       overrideLines: sql<number>`count(${shipments.courierOverride})::int`,
+      registrations: sql<number>`count(distinct ${providerTrackings.id})::int`,
+      stalledRegistrations: sql<number>`count(distinct ${providerTrackings.id}) filter (where ${providerTrackings.state} = 'awaiting_data' and ${providerTrackings.latestCheckpointAt} is null and ${providerTrackings.registeredAt} < now() - make_interval(hours => ${STALLED_AFTER_HOURS}))::int`,
+      // An open line's number, for "Detect" when choosing the courier.
+      sampleNumber: sql<string | null>`coalesce(max(${shipments.trackingNumber}) filter (where ${shipments.actualArrivalDate} is null), max(${shipments.trackingNumber}))`,
     })
     .from(shipments)
+    .leftJoin(providerTrackings, eq(providerTrackings.id, shipments.trackingRegistrationId))
     .where(and(sql`${shipments.trackingNumber} is not null`, branchFilter(c.req.query('branch'))))
     .groupBy(shipments.carrier, prefixExpr);
 
@@ -167,6 +173,9 @@ trackingSetupRoutes.get('/coverage', async (c) => {
       numbers: 0,
       registeredLines: 0,
       overrideLines: 0,
+      registrations: 0,
+      stalledRegistrations: 0,
+      sampleNumber: null,
       route: 'unresolved' as const,
       provider: null,
       courierCode: null,
@@ -181,6 +190,9 @@ trackingSetupRoutes.get('/coverage', async (c) => {
     row.numbers += g.numbers;
     row.registeredLines += g.registeredLines;
     row.overrideLines += g.overrideLines;
+    row.registrations += g.registrations;
+    row.stalledRegistrations += g.stalledRegistrations;
+    row.sampleNumber ??= g.sampleNumber;
     rows.set(id, row);
   }
   for (const row of rows.values()) {
@@ -191,7 +203,8 @@ trackingSetupRoutes.get('/coverage', async (c) => {
     row.courierCode = t.courierCode;
     row.courierName = t.courierName;
     row.reason = t.reason;
-    if (row.route === 'unresolved' && allCouriers.length) {
+    // Candidates for mapped and unsupported rows too, so the courier can be changed in place.
+    if (row.route !== 'direct' && allCouriers.length) {
       const cand = courierCandidates(row.carrier, allCouriers);
       row.candidates = cand.candidates.slice(0, 8).map(({ courierCode, name }) => ({ courierCode, name }));
       row.suggested = cand.suggested;

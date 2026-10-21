@@ -260,6 +260,12 @@ export interface CoverageRow {
   numbers: number;
   registeredLines: number;
   overrideLines: number;
+  /** Distinct registrations linked to these lines (a courier change unlinks them; re-registering uses credits). */
+  registrations: number;
+  /** Registrations still without any scan long after registering: the courier may be wrong. */
+  stalledRegistrations: number;
+  /** A tracking number from these lines (open ones first), for TrackingMore's courier detection. */
+  sampleNumber: string | null;
   /** direct = own carrier API (FedEx); mapped = TrackingMore courier confirmed; unsupported; unresolved. */
   route: 'direct' | 'mapped' | 'unsupported' | 'unresolved';
   provider: string | null;
