@@ -8,6 +8,7 @@ import { progressRoutes } from './routes/progress';
 import { reportsRoutes } from './routes/reports';
 import { shipmentsRoutes } from './routes/shipments';
 import { trackingRoutes } from './routes/tracking';
+import { trackingSetupRoutes } from './routes/trackingSetup';
 import { fedexEnvironment, trackingMoreConfig } from './tracking/registry';
 
 export const app = new Hono<AppEnv>().basePath('/api');
@@ -61,6 +62,7 @@ app.route('/shipments', shipmentsRoutes);
 app.route('/reports', reportsRoutes);
 app.route('/progress', progressRoutes);
 app.route('/tracking', trackingRoutes);
+app.route('/tracking', trackingSetupRoutes);
 
 app.onError((err, c) => {
   console.error(err);

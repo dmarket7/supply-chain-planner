@@ -36,6 +36,13 @@
       "when": 1792527611853,
       "tag": "0004_upload_progress",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792611197954,
+      "tag": "0005_trackingmore_registrations",
+      "breakpoints": true
     }
   ]
 }

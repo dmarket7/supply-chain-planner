@@ -173,7 +173,8 @@ export interface Shipment {
   latestChange: { importId: number | null; reportDate: string; changes: LineChange[] } | null;
   /** User-confirmed provider courier code for this line (overrides the carrier mapping). */
   courierOverride: string | null;
-  providerTrackingId: number | null;
+  /** Registration (provider_trackings row) this line is linked to. */
+  trackingRegistrationId: number | null;
   /** Filled in by the API: how this line is tracked. */
   tracking?: LineTracking;
 }
@@ -247,6 +248,27 @@ export interface LineTracking {
   /** Why the line can't be tracked, for unresolved/unsupported lines. */
   reason: string | null;
   registration: TrackingRegistrationInfo | null;
+}
+
+/** One carrier (or generic carrier + reference prefix) in the coverage view. */
+export interface CoverageRow {
+  carrier: string;
+  prefix: string;
+  label: string;
+  lines: number;
+  openLines: number;
+  numbers: number;
+  registeredLines: number;
+  overrideLines: number;
+  /** direct = own carrier API (FedEx); mapped = TrackingMore courier confirmed; unsupported; unresolved. */
+  route: 'direct' | 'mapped' | 'unsupported' | 'unresolved';
+  provider: string | null;
+  courierCode: string | null;
+  courierName: string | null;
+  reason: string | null;
+  candidates: { courierCode: string; name: string }[];
+  suggested: string | null;
+  ambiguous: boolean;
 }
 
 export interface TrackingRun {
