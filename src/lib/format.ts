@@ -1,4 +1,4 @@
-import type { ArrivalSource, Shipment, ShipmentStatus } from '../../shared/types';
+import type { ArrivalSource, LineTracking, Shipment, ShipmentStatus, TrackingLabel } from '../../shared/types';
 
 export function formatDate(iso: string | null | undefined, opts: Intl.DateTimeFormatOptions = {}): string {
   if (!iso) return '—';
@@ -100,3 +100,39 @@ export function relativeTime(iso: string | null | undefined, now = Date.now()): 
 export function formatDateTime(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 }
+
+/** How a line is tracked, in words. "Awaiting data" and API errors are never shown as "not found". */
+export const TRACKING_LABEL_TEXT: Record<TrackingLabel, string> = {
+  no_tracking: 'No tracking number',
+  direct: 'Carrier API',
+  unresolved: 'Needs courier',
+  unsupported: 'Not supported',
+  not_registered: 'Not registered',
+  awaiting_data: 'Registered · awaiting data',
+  active: 'Tracking active',
+  unavailable: 'Tracking unavailable',
+  expired: 'Tracking expired',
+  api_error: 'Tracking API error',
+};
+
+export const TRACKING_LABEL_STYLE: Record<TrackingLabel, string> = {
+  no_tracking: 'text-slate-400',
+  direct: 'bg-cyan-50 text-cyan-800 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-950 dark:text-cyan-200 dark:ring-cyan-800',
+  unresolved: 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-800',
+  unsupported: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+  not_registered: 'text-slate-600 ring-1 ring-inset ring-slate-300 dark:text-slate-300 dark:ring-slate-700',
+  awaiting_data: 'bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-800',
+  active: 'bg-cyan-50 text-cyan-800 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-950 dark:text-cyan-200 dark:ring-cyan-800',
+  unavailable: 'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+  expired: 'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700',
+  api_error: 'bg-red-50 text-red-800 ring-1 ring-inset ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-800',
+};
+
+/** Badge text for a line's tracking, naming the direct provider where there is one. */
+export function trackingLabelText(t: LineTracking | undefined): string {
+  if (!t) return '—';
+  if (t.label === 'direct') return `${t.courierName ?? 'Carrier'} API`;
+  return TRACKING_LABEL_TEXT[t.label];
+}
+
+export const PROVIDER_NAMES: Record<string, string> = { fedex: 'FedEx API', trackingmore: 'TrackingMore' };

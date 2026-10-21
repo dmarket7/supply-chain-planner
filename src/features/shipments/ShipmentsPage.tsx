@@ -2,18 +2,18 @@ import { useDeferredValue, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PROGRESS_BUCKETS, PROGRESS_BUCKET_LABELS, bucketsOf, type ProgressBucket } from '../../../shared/progress';
-import { SHIPMENT_STATUSES, type Shipment, type ShipmentStatus } from '../../../shared/types';
-import { Card, Empty, ErrorNote, PageHeader, SourceDot, SourceLegend, StatusBadge, tableCls, tdCls, thCls } from '../../components/ui';
+import { SHIPMENT_STATUSES, TRACKING_LABELS, type Shipment, type ShipmentStatus, type TrackingLabel } from '../../../shared/types';
+import { Card, Empty, ErrorNote, PageHeader, SourceDot, SourceLegend, StatusBadge, TrackingBadge, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
-import { STATUS_LABELS, arrivalDataSource, arrivalLabel, formatDate, poLineLabel } from '../../lib/format';
+import { STATUS_LABELS, TRACKING_LABEL_TEXT, arrivalDataSource, arrivalLabel, formatDate, poLineLabel } from '../../lib/format';
 import { changeLabel, headlineChange } from '../../lib/progress';
 import { useBranch } from '../../app/branch';
 import { ProgressSummaryCard, useLatestProgress } from './ProgressSummary';
 import { ShipmentDrawer } from './ShipmentDrawer';
 import { TrackingLog } from './TrackingLog';
-import { carrierList, useTrackingRefresh, useTrackingStatus } from './TrackingRefresh';
+import { useTrackingRefresh } from './TrackingRefresh';
 
-type TrackingFilter = '' | 'found' | 'not_found' | 'unchecked';
+type TrackingFilter = '' | TrackingLabel;
 
 type ProgressFilter = ProgressBucket | 'changed';
 
@@ -39,9 +39,6 @@ export function ShipmentsPage() {
     });
   const [runFilter, setRunFilter] = useState<number | null>(null);
   const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>('');
-  const trackingStatus = useTrackingStatus();
-  const trackedCarriers = new Set(trackingStatus.data?.providers.flatMap((p) => p.carriers) ?? []);
-  const carrierNames = carrierList(trackingStatus.data);
 
   const { data, error, isLoading } = useQuery({
     queryKey: ['shipments', carrier, q, branch],
@@ -56,19 +53,12 @@ export function ShipmentsPage() {
   const changedInLatest = (s: Shipment) => latestImportId !== null && s.latestChange?.importId === latestImportId;
   const byProgress = useMemo(() => {
     if (runFilter !== null) return all.filter((s) => s.trackingRunId === runFilter);
-    const tracked =
-      trackingFilter === 'found'
-        ? all.filter((s) => s.trackingFound)
-        : trackingFilter === 'not_found'
-          ? all.filter((s) => s.trackingFound === false)
-          : trackingFilter === 'unchecked'
-            ? all.filter((s) => !!s.trackingNumber && !s.lastTrackedAt && trackedCarriers.has(s.carrier ?? ''))
-            : all;
+    const tracked = trackingFilter ? all.filter((s) => s.tracking?.label === trackingFilter) : all;
     if (!progressFilter) return tracked;
     return tracked.filter(
       (s) => changedInLatest(s) && (progressFilter === 'changed' || bucketsOf(s.latestChange!.changes).includes(progressFilter)),
     );
-  }, [all, progressFilter, runFilter, latestImportId, trackingFilter, trackingStatus.data]);
+  }, [all, progressFilter, runFilter, latestImportId, trackingFilter]);
   // Status counts follow the progress filter so the tabs describe what's listed.
   const counts = useMemo(() => {
     const c: Partial<Record<ShipmentStatus, number>> = {};
@@ -143,9 +133,14 @@ export function ShipmentsPage() {
                 className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
               >
                 <option value="">All tracking</option>
-                <option value="found">Updated by {carrierNames}</option>
-                <option value="not_found">Not found by {carrierNames}</option>
-                <option value="unchecked">{carrierNames}: not checked yet</option>
+                {TRACKING_LABELS.filter((l) => l !== 'no_tracking').map((l) => {
+                  const n = all.filter((s) => s.tracking?.label === l).length;
+                  return n || l === trackingFilter ? (
+                    <option key={l} value={l}>
+                      {TRACKING_LABEL_TEXT[l]} ({n.toLocaleString()})
+                    </option>
+                  ) : null;
+                })}
               </select>
             )}
             {tracking.buttons}
@@ -221,7 +216,14 @@ export function ShipmentsPage() {
                     <td className={`${tdCls} font-mono text-xs`}>{s.asn ?? '—'}</td>
                     <td className={`${tdCls} text-xs`}>{s.partNumber ?? '—'}</td>
                     <td className={tdCls}>{s.carrier ?? '—'}</td>
-                    <td className={`${tdCls} font-mono text-xs`}>{s.trackingNumber ?? '—'}</td>
+                    <td className={`${tdCls} text-xs`}>
+                      <span className="font-mono">{s.trackingNumber ?? '—'}</span>
+                      {tracking.configured && s.trackingNumber && (
+                        <span className="mt-1 block">
+                          <TrackingBadge tracking={s.tracking} />
+                        </span>
+                      )}
+                    </td>
                     <td className={`${tdCls} whitespace-nowrap`} title={s.estimatedArrivalDate ? `Carrier ETA; supplier ETA ${formatDate(s.promisedArrivalDate)}` : undefined}>
                       <SourceDot source={s.estimatedArrivalDate ? 'tracking' : null} />
                       {formatDate(s.estimatedArrivalDate ?? s.promisedArrivalDate)}

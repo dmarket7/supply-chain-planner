@@ -5,3 +5,6 @@ NEON_AUTH_URL=https://ep-xxx.neonauth.us-east-2.aws.neon.build/neondb/auth
 FEDEX_CLIENT_ID=
 FEDEX_CLIENT_SECRET=
 FEDEX_ENV=sandbox
+# Optional: TrackingMore API V4 (multi-carrier tracking). Both are required to turn it on; the key stays server-side.
+TRACKINGMORE_API_KEY=
+TRACKINGMORE_ENABLED=false

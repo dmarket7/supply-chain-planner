@@ -247,8 +247,10 @@ export function fedexProvider(config: FedExConfig, fetchImpl: typeof fetch = fet
 
   return {
     name: 'fedex',
+    kind: 'direct',
     carriers: ['FedEx'],
-    supports: (req) => req.carrier === 'FedEx',
+    // Registered identities belong to their registration provider, even for FedEx numbers.
+    supports: (req) => req.carrier === 'FedEx' && !req.registrationId,
     async track(reqs) {
       const results: TrackingResult[] = [];
       for (let i = 0; i < reqs.length; i += MAX_PER_CALL) {

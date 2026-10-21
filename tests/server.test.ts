@@ -69,6 +69,8 @@ const shipment = (over: Partial<Shipment>): Shipment => ({
   arrivalSetBy: null,
   arrivalSetAt: null,
   latestChange: null,
+  courierOverride: null,
+  trackingRegistrationId: null,
   ...over,
 });
 

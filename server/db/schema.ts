@@ -11,8 +11,11 @@ import {
   text,
   timestamp,
   boolean,
+  primaryKey,
+  unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping, type LineChangeKind } from '../../shared/types';
+import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping, type LineChangeKind, type RegistrationState } from '../../shared/types';
 
 export const shipmentStatus = pgEnum('shipment_status', SHIPMENT_STATUSES);
 export const shipmentMode = pgEnum('shipment_mode', SHIPMENT_MODES);
@@ -75,6 +78,70 @@ export const trackingRuns = pgTable('tracking_runs', {
   error: text('error'),
 }, (t) => [index('tracking_runs_started_idx').on(t.startedAt)]);
 
+/** A registration provider's courier list (TrackingMore /couriers/all), synced on demand. */
+export const providerCouriers = pgTable('provider_couriers', {
+  provider: text('provider').notNull(),
+  courierCode: text('courier_code').notNull(),
+  name: text('name').notNull(),
+  countryIso2: text('country_iso2'),
+  type: text('type'),
+  url: text('url'),
+  requiredFields: jsonb('required_fields'),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [primaryKey({ columns: [t.provider, t.courierCode] })]);
+
+/**
+ * User-confirmed mapping from an app carrier (plus, for generic carriers like "Forwarder", a reference
+ * prefix such as "CWF") to a provider courier code, or a decision that the provider can't track it.
+ */
+export const carrierMappings = pgTable('carrier_mappings', {
+  id: serial('id').primaryKey(),
+  provider: text('provider').notNull(),
+  carrier: text('carrier').notNull(),
+  prefix: text('prefix').notNull().default(''),
+  courierCode: text('courier_code'),
+  status: text('status').$type<'mapped' | 'unsupported'>().notNull(),
+  confirmedBy: text('confirmed_by').notNull(),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [unique('carrier_mappings_key').on(t.provider, t.carrier, t.prefix)]);
+
+/**
+ * One tracking identity registered with a provider that needs registration (TrackingMore).
+ * Identity = provider + courier + number + episode: the same number can belong to different couriers,
+ * and carriers reuse numbers, so a shipment months later is a new episode (keyed by its ship date).
+ * PO lines point at their registration through shipments.tracking_registration_id.
+ */
+export const providerTrackings = pgTable('provider_trackings', {
+  id: serial('id').primaryKey(),
+  provider: text('provider').notNull(),
+  courierCode: text('courier_code').notNull(),
+  trackingNumber: text('tracking_number').notNull(),
+  /** Earliest ship date of the episode (YYYY-MM-DD), or `none` when the lines had no ship date. */
+  episodeKey: text('episode_key').notNull(),
+  anchorShipDate: date('anchor_ship_date'),
+  /** The provider's own id for the tracking (TrackingMore `id`), when returned. */
+  externalId: text('external_id'),
+  state: text('state').$type<RegistrationState>().notNull(),
+  /** When a request claimed the row to register it; a stale claim can be retried. */
+  claimedAt: timestamp('claimed_at', { withTimezone: true }),
+  registeredAt: timestamp('registered_at', { withTimezone: true }),
+  registeredBy: text('registered_by'),
+  lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+  lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  lastProviderStatus: text('last_provider_status'),
+  lastProviderSubstatus: text('last_provider_substatus'),
+  latestEvent: text('latest_event'),
+  latestCheckpointAt: timestamp('latest_checkpoint_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  lastErrorAt: timestamp('last_error_at', { withTimezone: true }),
+  lastWarning: text('last_warning'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [
+  unique('provider_trackings_identity').on(t.provider, t.courierCode, t.trackingNumber, t.episodeKey),
+  index('provider_trackings_state_idx').on(t.state),
+]);
+
 export const shipments = pgTable('shipments', {
   id: serial('id').primaryKey(),
   /** `po:<PO>:<LINE>:<ASN>` (or `trk:<TRACKING>` when a report has no PO); the upsert key for re-imports. */
@@ -123,6 +190,12 @@ export const shipments = pgTable('shipments', {
   /** Who entered a manual arrival, and when. */
   arrivalSetBy: text('arrival_set_by'),
   arrivalSetAt: timestamp('arrival_set_at', { withTimezone: true }),
+  /** User-confirmed provider courier code for this line, when the carrier can't be mapped reliably. */
+  courierOverride: text('courier_override'),
+  courierOverrideBy: text('courier_override_by'),
+  courierOverrideAt: timestamp('courier_override_at', { withTimezone: true }),
+  /** Registration this line's tracking number belongs to (provider_trackings). */
+  trackingRegistrationId: integer('tracking_registration_id').references(() => providerTrackings.id, { onDelete: 'set null' }),
   firstImportId: integer('first_import_id').references(() => imports.id),
   lastImportId: integer('last_import_id').references(() => imports.id),
   /** The spreadsheet row as last imported, so unmapped columns are available later. */
@@ -136,6 +209,7 @@ export const shipments = pgTable('shipments', {
   index('shipments_branch_idx').on(t.branch),
   index('shipments_tracking_idx').on(t.trackingNumber),
   index('shipments_po_idx').on(t.poNumber, t.lineRef),
+  index('shipments_registration_idx').on(t.trackingRegistrationId),
 ]);
 
 export const trackingEvents = pgTable('tracking_events', {
@@ -147,7 +221,12 @@ export const trackingEvents = pgTable('tracking_events', {
   location: text('location'),
   provider: text('provider').notNull(),
   raw: jsonb('raw'),
-}, (t) => [index('tracking_events_shipment_idx').on(t.shipmentId, t.occurredAt)]);
+  /** Stable identity (time + status + description + location) so repeated syncs never duplicate events. */
+  eventKey: text('event_key'),
+}, (t) => [
+  index('tracking_events_shipment_idx').on(t.shipmentId, t.occurredAt),
+  uniqueIndex('tracking_events_identity').on(t.shipmentId, t.provider, t.eventKey),
+]);
 
 /**
  * What one upload changed on one line (see LINE_CHANGE_KINDS), so a line's progress can be followed

@@ -7,6 +7,7 @@ const NAV = [
   { to: '/', label: 'Inbound by day', end: true },
   { to: '/shipments', label: 'Shipments' },
   { to: '/arrivals', label: 'Arrival log' },
+  { to: '/tracking', label: 'Carrier tracking' },
   { to: '/import', label: 'Import report' },
 ];
 
