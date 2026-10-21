@@ -120,7 +120,7 @@ API V4 (`https://api.trackingmore.com/v4`, header `Tracking-Api-Key`), implement
 **Configure**
 
 1. Create a TrackingMore account and API key.
-2. Locally, add to `.dev.vars`: `TRACKINGMORE_API_KEY=…` and `TRACKINGMORE_ENABLED=true`. In production:
+2. Locally, add to `.env`: `TRACKINGMORE_API_KEY=…` and `TRACKINGMORE_ENABLED=true`. In production:
    ```sh
    pnpm wrangler pages secret put TRACKINGMORE_API_KEY
    pnpm wrangler pages secret put TRACKINGMORE_ENABLED   # true
@@ -162,7 +162,7 @@ A recent sync error also shows as **Tracking API error**, so a failed call is ne
 Uses the FedEx Track API (`server/tracking/fedex.ts`): an OAuth token (cached for its hour), then up to 30 numbers per call, each with a ship-date window of ±30 days around the line's ETD so reused numbers resolve to the right shipment.
 
 1. At [developer.fedex.com](https://developer.fedex.com), create a project with the **Track API** and copy its sandbox API key (client ID) and secret key.
-2. Locally, add them to `.dev.vars` (see `.dev.vars.example`) and check them without touching the database:
+2. Locally, add them to `.env` and check them without touching the database:
    ```sh
    pnpm fedex:check <tracking number> [ship date YYYY-MM-DD] …
    ```
@@ -186,4 +186,4 @@ FedEx keeps tracking history for about 90 days after delivery, so older closed l
 | `pnpm db:generate` | New migration after editing `server/db/schema.ts` |
 | `pnpm db:studio` | Browse the DB |
 | `pnpm trackingmore:couriers [names] [--detect numbers]` | TrackingMore courier coverage with the key in `.env` (read-only, no credits) |
-| `pnpm fedex:check <number> [ship date]` | Look up FedEx numbers with the keys in `.dev.vars`, without touching the DB |
+| `pnpm fedex:check <number> [ship date]` | Look up FedEx numbers with the keys in `.env`, without touching the DB |

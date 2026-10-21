@@ -3,19 +3,11 @@
  * courier codes for the carriers we care about. Read-only: it registers nothing and uses no credits.
  * Usage: pnpm trackingmore:couriers [extra carrier names…] [--detect <tracking number>…]
  */
-import fs from 'node:fs';
 import { courierCandidates } from '../server/tracking/couriers';
 import { trackingMoreClient } from '../server/tracking/trackingmore/client';
+import { loadEnv } from './env';
 
-const vars = Object.fromEntries(
-  (fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8') : '')
-    .split(/\r?\n/)
-    .map((l) => l.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/))
-    .filter((m): m is RegExpMatchArray => !!m)
-    .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]),
-);
-// A key already set in the shell wins over the one in .env.
-const apiKey = process.env.TRACKINGMORE_API_KEY || vars.TRACKINGMORE_API_KEY;
+const apiKey = loadEnv().TRACKINGMORE_API_KEY;
 if (!apiKey) {
   console.error('Add TRACKINGMORE_API_KEY to .env first.');
   process.exit(1);
