@@ -10,7 +10,7 @@ import { TrackingRateLimitError } from '../tracking/provider';
 import { getProviders, getTrackingMoreClient, trackingMoreConfig } from '../tracking/registry';
 import { registerIdentities } from '../tracking/registration';
 import { loadRoutingContext, MAX_RECENT_DAYS, planForScope } from '../tracking/routing';
-import { TrackingMoreError } from '../tracking/trackingmore/client';
+import { TrackingMoreError, type TrackingMoreCourier } from '../tracking/trackingmore/client';
 import { TRACKINGMORE } from '../tracking/trackingmore/provider';
 import { branchFilter, chunk } from './common';
 
@@ -46,21 +46,14 @@ async function courierExists(db: Db, code: string) {
 
 // ─── Courier list ───────────────────────────────────────────────────────────────────────────────
 
-/** Fetches TrackingMore's supported couriers and stores them (free; no credits). */
-trackingSetupRoutes.post('/couriers/sync', async (c) => {
-  const tm = requireTrackingMore(c.env);
-  if (tm.error) return c.json(tm.error, 503);
-  let list;
-  try {
-    list = await tm.client.listCouriers();
-  } catch (err) {
-    const e = providerError(err);
-    return c.json(e.body, e.status);
-  }
-  if (!list.length) return c.json({ error: 'TrackingMore returned no couriers' }, 502);
-  const db = getDb(c.env.DATABASE_URL);
-  const now = new Date();
-  const rows = list.map((x) => ({
+/**
+ * Upserts TrackingMore's courier list. The list can repeat a courier code (it listed `ztcce` twice in
+ * Oct 2026), and one upsert can't touch the same row twice, so the first entry per code wins.
+ */
+export async function storeCouriers(db: Db, list: TrackingMoreCourier[], now: Date) {
+  const byCode = new Map<string, TrackingMoreCourier>();
+  for (const x of list) if (!byCode.has(x.courier_code)) byCode.set(x.courier_code, x);
+  const rows = [...byCode.values()].map((x) => ({
     provider: TRACKINGMORE,
     courierCode: x.courier_code,
     name: x.courier_name?.trim() || x.courier_code,
@@ -87,7 +80,24 @@ trackingSetupRoutes.post('/couriers/sync', async (c) => {
       }),
   );
   await db.batch(writes as [(typeof writes)[number], ...typeof writes]);
-  return c.json({ couriers: rows.length, syncedAt: now.toISOString() });
+  return rows.length;
+}
+
+/** Fetches TrackingMore's supported couriers and stores them (free; no credits). */
+trackingSetupRoutes.post('/couriers/sync', async (c) => {
+  const tm = requireTrackingMore(c.env);
+  if (tm.error) return c.json(tm.error, 503);
+  let list;
+  try {
+    list = await tm.client.listCouriers();
+  } catch (err) {
+    const e = providerError(err);
+    return c.json(e.body, e.status);
+  }
+  if (!list.length) return c.json({ error: 'TrackingMore returned no couriers' }, 502);
+  const now = new Date();
+  const stored = await storeCouriers(getDb(c.env.DATABASE_URL), list, now);
+  return c.json({ couriers: stored, syncedAt: now.toISOString() });
 });
 
 /** Search the stored courier list (for pickers). */

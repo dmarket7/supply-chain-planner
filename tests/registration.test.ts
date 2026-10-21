@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../server/db/client';
 import { carrierMappings, providerCouriers, providerTrackings, shipments } from '../server/db/schema';
 import { alreadyExistsOutcome, planRegistrations, registerIdentities, type ExistingRegistration } from '../server/tracking/registration';
+import { storeCouriers } from '../server/routes/trackingSetup';
 import { planForScope } from '../server/tracking/routing';
 import { TrackingMoreAuthError, TrackingMoreQuotaError, type TrackingMoreClient } from '../server/tracking/trackingmore/client';
 import { trackingMoreProvider } from '../server/tracking/trackingmore/provider';
@@ -268,5 +269,21 @@ describe('registering with TrackingMore', () => {
     const { client } = fakeClient();
     const { preview } = await planForScope(db, providers(client), { scope: 'recent', recentDays: 30 });
     expect(preview).toMatchObject({ linesConsidered: 1, identitiesToRegister: 1 });
+  });
+});
+
+describe('courier list sync', () => {
+  it('stores a list that repeats a courier code, and re-syncs without duplicating rows', async () => {
+    const { db } = await createTestDb();
+    const list = [
+      { courier_code: 'ups', courier_name: 'UPS' },
+      { courier_code: 'ztcce', courier_name: 'ZTCCE' },
+      { courier_code: 'ztcce', courier_name: 'ZTCCE (again)' },
+    ];
+    expect(await storeCouriers(db, list, new Date('2026-10-21T00:00:00Z'))).toBe(2);
+    expect(await storeCouriers(db, [...list, { courier_code: 'dhl', courier_name: 'DHL' }], new Date('2026-10-22T00:00:00Z'))).toBe(3);
+    const rows = await db.select().from(providerCouriers);
+    expect(rows.map((r) => r.courierCode).sort()).toEqual(['dhl', 'ups', 'ztcce']);
+    expect(rows.find((r) => r.courierCode === 'ztcce')?.name).toBe('ZTCCE');
   });
 });
