@@ -70,7 +70,7 @@ export const DATA_SOURCE_DESCRIPTIONS: Record<DataSource, string> = {
 
 /** Dot beside a value; hollow for report data so the coloured ones stand out. */
 export const DATA_SOURCE_DOT: Record<DataSource, string> = {
-  tracking: 'bg-violet-500 dark:bg-violet-400',
+  tracking: 'bg-cyan-500 dark:bg-cyan-400',
   manual: 'bg-orange-500 dark:bg-orange-400',
   report: 'border border-slate-400 dark:border-slate-500',
 };

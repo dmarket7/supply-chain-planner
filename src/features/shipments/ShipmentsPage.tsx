@@ -11,7 +11,9 @@ import { useBranch } from '../../app/branch';
 import { ProgressSummaryCard, useLatestProgress } from './ProgressSummary';
 import { ShipmentDrawer } from './ShipmentDrawer';
 import { TrackingLog } from './TrackingLog';
-import { useTrackingRefresh } from './TrackingRefresh';
+import { carrierList, useTrackingRefresh, useTrackingStatus } from './TrackingRefresh';
+
+type TrackingFilter = '' | 'found' | 'not_found' | 'unchecked';
 
 type ProgressFilter = ProgressBucket | 'changed';
 
@@ -36,6 +38,10 @@ export function ShipmentsPage() {
       return p;
     });
   const [runFilter, setRunFilter] = useState<number | null>(null);
+  const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>('');
+  const trackingStatus = useTrackingStatus();
+  const trackedCarriers = new Set(trackingStatus.data?.providers.flatMap((p) => p.carriers) ?? []);
+  const carrierNames = carrierList(trackingStatus.data);
 
   const { data, error, isLoading } = useQuery({
     queryKey: ['shipments', carrier, q, branch],
@@ -50,11 +56,19 @@ export function ShipmentsPage() {
   const changedInLatest = (s: Shipment) => latestImportId !== null && s.latestChange?.importId === latestImportId;
   const byProgress = useMemo(() => {
     if (runFilter !== null) return all.filter((s) => s.trackingRunId === runFilter);
-    if (!progressFilter) return all;
-    return all.filter(
+    const tracked =
+      trackingFilter === 'found'
+        ? all.filter((s) => s.trackingFound)
+        : trackingFilter === 'not_found'
+          ? all.filter((s) => s.trackingFound === false)
+          : trackingFilter === 'unchecked'
+            ? all.filter((s) => !!s.trackingNumber && !s.lastTrackedAt && trackedCarriers.has(s.carrier ?? ''))
+            : all;
+    if (!progressFilter) return tracked;
+    return tracked.filter(
       (s) => changedInLatest(s) && (progressFilter === 'changed' || bucketsOf(s.latestChange!.changes).includes(progressFilter)),
     );
-  }, [all, progressFilter, runFilter, latestImportId]);
+  }, [all, progressFilter, runFilter, latestImportId, trackingFilter, trackingStatus.data]);
   // Status counts follow the progress filter so the tabs describe what's listed.
   const counts = useMemo(() => {
     const c: Partial<Record<ShipmentStatus, number>> = {};
@@ -63,7 +77,10 @@ export function ShipmentsPage() {
   }, [byProgress]);
   const carriers = useMemo(() => [...new Set(all.map((s) => s.carrier).filter(Boolean) as string[])].sort(), [all]);
   const rows = status === 'all' ? byProgress : byProgress.filter((s) => s.status === status);
-  const hasManual = all.some((s) => s.arrivalSource === 'manual');
+  const legendSources = [
+    ...(all.some((s) => s.trackingFound) ? (['tracking'] as const) : []),
+    ...(all.some((s) => s.arrivalSource === 'manual') ? (['manual'] as const) : []),
+  ];
 
   const tab = (key: ShipmentStatus | 'all', label: string, n: number) => (
     <button
@@ -115,6 +132,22 @@ export function ShipmentsPage() {
                 </option>
               ))}
             </select>
+            {tracking.configured && (
+              <select
+                value={trackingFilter}
+                onChange={(e) => {
+                  setRunFilter(null);
+                  setTrackingFilter(e.target.value as TrackingFilter);
+                }}
+                aria-label="Carrier tracking"
+                className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
+              >
+                <option value="">All tracking</option>
+                <option value="found">Updated by {carrierNames}</option>
+                <option value="not_found">Not found by {carrierNames}</option>
+                <option value="unchecked">{carrierNames}: not checked yet</option>
+              </select>
+            )}
             {tracking.buttons}
           </>
         }
@@ -139,7 +172,7 @@ export function ShipmentsPage() {
       </div>
 
       <SourceLegend
-        sources={hasManual ? ['manual'] : []}
+        sources={legendSources}
         extra={
           latestImportId !== null && (
             <span className="inline-flex items-center gap-1.5">
@@ -176,14 +209,23 @@ export function ShipmentsPage() {
                     className={`cursor-pointer ${fresh ? 'bg-violet-50 hover:bg-violet-100 dark:bg-violet-950/40 dark:hover:bg-violet-950/70' : 'hover:bg-slate-50 dark:hover:bg-slate-900'}`}
                   >
                     {!branch && <td className={`${tdCls} whitespace-nowrap text-xs`}>{s.branch ?? '—'}</td>}
-                    <td className={tdCls}><StatusBadge status={s.status} /></td>
+                    <td
+                      className={`${tdCls} whitespace-nowrap`}
+                      title={s.lastTrackedAt ? `${s.trackingFound ? 'Tracked' : 'Not found'} by ${s.trackingProvider ?? 'carrier'}, checked ${new Date(s.lastTrackedAt).toLocaleString()}` : undefined}
+                    >
+                      <SourceDot source={s.trackingFound ? 'tracking' : null} />
+                      <StatusBadge status={s.status} />
+                    </td>
                     <td className={tdCls}>{s.supplier}</td>
                     <td className={`${tdCls} whitespace-nowrap`}>{poLineLabel(s)}</td>
                     <td className={`${tdCls} font-mono text-xs`}>{s.asn ?? '—'}</td>
                     <td className={`${tdCls} text-xs`}>{s.partNumber ?? '—'}</td>
                     <td className={tdCls}>{s.carrier ?? '—'}</td>
                     <td className={`${tdCls} font-mono text-xs`}>{s.trackingNumber ?? '—'}</td>
-                    <td className={`${tdCls} whitespace-nowrap`}>{formatDate(s.estimatedArrivalDate ?? s.promisedArrivalDate)}</td>
+                    <td className={`${tdCls} whitespace-nowrap`} title={s.estimatedArrivalDate ? `Carrier ETA; supplier ETA ${formatDate(s.promisedArrivalDate)}` : undefined}>
+                      <SourceDot source={s.estimatedArrivalDate ? 'tracking' : null} />
+                      {formatDate(s.estimatedArrivalDate ?? s.promisedArrivalDate)}
+                    </td>
                     <td className={`${tdCls} whitespace-nowrap`}>
                       <SourceDot source={arrivalDataSource(s)} />
                       {arrivalLabel(s)}

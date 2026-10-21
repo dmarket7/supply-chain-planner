@@ -12,6 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "sample:xlsx": "node scripts/make-sample.mjs",
+    "fedex:check": "tsx scripts/fedex-check.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
@@ -41,6 +42,7 @@
     "dotenv": "^18.0.8",
     "drizzle-kit": "^0.31.11",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^4.1.12",

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { describeAuthUrlProblem, requireAuth } from './auth';
-import type { AppEnv } from './env';
+import type { AppEnv, Env } from './env';
 import { branchesRoutes } from './routes/branches';
 import { importsRoutes } from './routes/imports';
 import { mappingsRoutes } from './routes/mappings';
@@ -8,8 +8,18 @@ import { progressRoutes } from './routes/progress';
 import { reportsRoutes } from './routes/reports';
 import { shipmentsRoutes } from './routes/shipments';
 import { trackingRoutes } from './routes/tracking';
+import { fedexEnvironment } from './tracking/registry';
 
 export const app = new Hono<AppEnv>().basePath('/api');
+
+function describeFedEx(env: Env): string {
+  const id = !!env.FEDEX_CLIENT_ID?.trim();
+  const secret = !!env.FEDEX_CLIENT_SECRET?.trim();
+  if (!id && !secret) return 'not set (FedEx tracking off)';
+  if (!id || !secret) return `incomplete: ${id ? 'FEDEX_CLIENT_SECRET' : 'FEDEX_CLIENT_ID'} is missing`;
+  const environment = fedexEnvironment(env);
+  return environment ? `ok (${environment})` : 'FEDEX_ENV must be "sandbox" or "production"';
+}
 
 /** Public; reports whether the server settings look right, never their values. */
 app.get('/health', (c) => {
@@ -22,6 +32,8 @@ app.get('/health', (c) => {
       config: {
         NEON_AUTH_URL: authProblem ?? 'ok',
         DATABASE_URL: databaseOk ? 'ok' : 'DATABASE_URL is missing or not a postgresql:// connection string',
+        // Optional carrier connections.
+        FEDEX: describeFedEx(c.env),
       },
     },
     ok ? 200 : 500,

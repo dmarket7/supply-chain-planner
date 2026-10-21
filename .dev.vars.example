@@ -1,3 +1,7 @@
 # Copy to .dev.vars for `wrangler pages dev`
 DATABASE_URL=postgresql://user:password@ep-xxx-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
 NEON_AUTH_URL=https://ep-xxx.neonauth.us-east-2.aws.neon.build/neondb/auth
+# Optional: FedEx tracking (developer.fedex.com project with the Track API). FEDEX_ENV: sandbox (default) or production
+FEDEX_CLIENT_ID=
+FEDEX_CLIENT_SECRET=
+FEDEX_ENV=sandbox

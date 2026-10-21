@@ -14,6 +14,7 @@ import {
   poLineLabel,
 } from '../../lib/format';
 import { CHANGE_DOT, changeLabel } from '../../lib/progress';
+import { useTrackingStatus } from './TrackingRefresh';
 import { ESTIMATED_ARRIVAL_SOURCES } from '../../../shared/types';
 
 export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => void }) {
@@ -36,6 +37,17 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
   const setArrivalMutation = useMutation({
     mutationFn: (actualArrivalDate: string | null) =>
       api(`/shipments/${id}/arrival`, { method: 'PATCH', body: JSON.stringify({ actualArrivalDate }) }),
+    onSuccess: () => void queryClient.invalidateQueries(),
+  });
+
+  const trackingStatus = useTrackingStatus();
+  const provider = trackingStatus.data?.providers.find((p) => data?.carrier && p.carriers.includes(data.carrier));
+  const lookup = useMutation({
+    mutationFn: () =>
+      api<{ found: number; linesChanged: number }>('/tracking/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ scope: 'line', shipmentIds: [id], force: true }),
+      }),
     onSuccess: () => void queryClient.invalidateQueries(),
   });
 
@@ -65,7 +77,7 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
         {data && (
           <div className="space-y-6">
             <dl className="divide-y divide-slate-100 dark:divide-slate-900">
-              {row('Status', <StatusBadge status={data.status} />)}
+              {row('Status', <><SourceDot source={data.trackingFound ? 'tracking' : null} /><StatusBadge status={data.status} /></>)}
               {row('PO status', data.poStatus)}
               {row('ASN / delivery', data.asn && <span className="font-mono text-xs">{data.asn}</span>)}
               {row('Customer PO', data.customerPo)}
@@ -139,6 +151,48 @@ export function ShipmentDrawer({ id, onClose }: { id: number; onClose: () => voi
               )}
               {setArrivalMutation.error && <div className="mt-2"><ErrorNote error={setArrivalMutation.error} /></div>}
             </section>
+
+            {data.trackingNumber && (provider || data.lastTrackedAt) && (
+              <section>
+                <h3 className="mb-2 text-sm font-medium">{data.carrier ?? 'Carrier'} tracking</h3>
+                <dl className="divide-y divide-slate-100 dark:divide-slate-900">
+                  {row(
+                    'Result',
+                    data.trackingFound === true ? (
+                      <><SourceDot source="tracking" />Found</>
+                    ) : data.trackingFound === false ? (
+                      `Not found${data.carrier ? ` by ${data.carrier}` : ''}`
+                    ) : (
+                      'Not checked yet'
+                    ),
+                  )}
+                  {row('Last checked', data.lastTrackedAt && formatDateTime(data.lastTrackedAt))}
+                  {row('Last changed by tracking', data.trackingChangedAt && formatDateTime(data.trackingChangedAt))}
+                  {row('Latest scan', data.lastEventAt && formatDateTime(data.lastEventAt))}
+                </dl>
+                {provider && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => lookup.mutate()}
+                      disabled={lookup.isPending}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-40 dark:border-slate-700"
+                    >
+                      {lookup.isPending ? 'Looking up…' : 'Look up now'}
+                    </button>
+                    {lookup.data && (
+                      <span className="text-sm text-slate-500">
+                        {!lookup.data.found
+                          ? `${data.carrier} has no record of this number.`
+                          : lookup.data.linesChanged
+                            ? 'Updated.'
+                            : 'No changes since the last check.'}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {lookup.error && <div className="mt-2"><ErrorNote error={lookup.error} /></div>}
+              </section>
+            )}
 
             <section>
               <h3 className="mb-2 text-sm font-medium">Progress across uploads</h3>

@@ -43,7 +43,7 @@ export interface RefreshResult {
   linesChanged: number;
 }
 
-function candidateFilter(opts: RefreshOptions): SQL {
+function candidateFilter(opts: RefreshOptions, carriers: string[]): SQL {
   const notRecent = opts.force
     ? undefined
     : or(
@@ -58,8 +58,8 @@ function candidateFilter(opts: RefreshOptions): SQL {
         : undefined;
   return and(
     isNotNull(shipments.trackingNumber),
-    // Only formats we recognized; unrecognized references would just burn tracker quota.
-    isNotNull(shipments.carrier),
+    // Only carriers a connected provider handles; others would fill the batch and never be checked.
+    inArray(shipments.carrier, carriers),
     scope,
     notRecent,
     opts.branch ? eq(shipments.branch, opts.branch) : undefined,
@@ -72,7 +72,8 @@ function candidateFilter(opts: RefreshOptions): SQL {
  * every line sharing each number. Shared by the API route and (later) a cron Worker.
  */
 export async function refreshTracking(db: Db, providers: TrackingProvider[], opts: RefreshOptions): Promise<RefreshResult> {
-  const where = candidateFilter(opts);
+  const carriers = [...new Set(providers.flatMap((p) => p.carriers))];
+  const where = candidateFilter(opts, carriers.length ? carriers : ['']);
   const numbers = await db
     .select({
       trackingNumber: shipments.trackingNumber,

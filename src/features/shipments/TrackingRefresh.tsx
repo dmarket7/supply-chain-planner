@@ -7,6 +7,22 @@ import type { TrackingRun } from '../../../shared/types';
 
 type Scope = 'open' | 'estimated';
 
+export interface TrackingStatus {
+  configured: boolean;
+  providers: { name: string; carriers: string[] }[];
+}
+
+/** Which carrier connections the server has (FedEx, …). */
+export function useTrackingStatus() {
+  return useQuery({ queryKey: ['tracking-status'], queryFn: () => api<TrackingStatus>('/tracking/status'), staleTime: 5 * 60_000 });
+}
+
+/** "FedEx" or "FedEx and DHL": the carriers tracking covers, for labels. */
+export function carrierList(status: TrackingStatus | undefined): string {
+  const names = [...new Set(status?.providers.flatMap((p) => p.carriers) ?? [])];
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? 'carrier');
+}
+
 /** Recent refresh runs (newest first); the first one defines "changed in the latest refresh". */
 export function useTrackingRuns() {
   return useQuery({ queryKey: ['tracking-runs'], queryFn: () => api<TrackingRun[]>('/tracking/runs?limit=20') });
@@ -52,11 +68,8 @@ const SCOPE_LABELS: Record<Scope, string> = {
 export function useTrackingRefresh() {
   const queryClient = useQueryClient();
   const { branch } = useBranch();
-  const status = useQuery({
-    queryKey: ['tracking-status'],
-    queryFn: () => api<{ configured: boolean; providers: string[] }>('/tracking/status'),
-    staleTime: 5 * 60_000,
-  });
+  const status = useTrackingStatus();
+  const carriers = carrierList(status.data);
   const [running, setRunning] = useState<Scope | null>(null);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -126,13 +139,13 @@ export function useTrackingRefresh() {
           </button>
         ) : (
           <>
-            <button onClick={() => void run('open')} className={btn} title="Look up tracking numbers of lines that have not arrived">
+            <button onClick={() => void run('open')} className={btn} title={`Look up ${carriers} tracking numbers of lines that have not arrived`}>
               {SCOPE_LABELS.open}
             </button>
             <button
               onClick={() => void run('estimated')}
               className={btn}
-              title="Look up arrived lines whose date is only estimated from the reports, to replace it with the carrier's delivery date"
+              title={`Look up ${carriers} lines whose arrival date is only estimated from the reports, to replace it with the delivery date`}
             >
               {SCOPE_LABELS.estimated}
             </button>
@@ -145,7 +158,7 @@ export function useTrackingRefresh() {
         {totals && (
           <p className="text-sm text-slate-500">
             {running ? `${SCOPE_LABELS[totals.scope]}… ` : ''}
-            Checked {totals.checked.toLocaleString()} tracking numbers: {totals.found.toLocaleString()} found
+            Checked {totals.checked.toLocaleString()} {carriers} tracking numbers: {totals.found.toLocaleString()} found
             {totals.notFound > 0 && `, ${totals.notFound.toLocaleString()} not found`}.{' '}
             {totals.linesChanged.toLocaleString()} lines changed
             {totals.arrivalsConfirmed > 0 && `, ${totals.arrivalsConfirmed.toLocaleString()} arrivals confirmed`}.

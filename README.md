@@ -96,13 +96,35 @@ The Shipments page shows a summary of the latest upload ("Since the Oct 18 repor
 
 Lines in uploads made before this log existed get a reconstructed history: when they were first listed, when they closed, and supplier ETA changes.
 
-## Carrier tracking (later)
+## Carrier tracking
 
-Carrier API connections (FedEx, DHL, UPS, DSV, …) will be added one carrier at a time behind the `TrackingProvider` interface in `server/tracking/`: implement `provider.ts` for the carrier, enable it in `registry.ts` with its own secret, and the Shipments page shows **Refresh tracking** and its history automatically. Until then, everything comes from the uploaded reports. The refresh logic that is already in place:
+Each carrier gets its own API connection behind the `TrackingProvider` interface (`server/tracking/`), enabled by its own secrets in `registry.ts`. When at least one is configured, the Shipments page shows **Refresh tracking**, **Confirm estimated arrivals**, a tracking filter and the refresh history, and a line's detail panel gets **Look up now**. Values from tracking get a cyan dot.
 
-- Each distinct tracking number is looked up once and applied to every PO line that shares it. A number is re-checked at most every 6 hours, in batches of 20 (Workers' free plan allows 50 outbound requests per invocation).
-- A delivery from tracking replaces report-based estimates but never a date entered by hand. A delivery dated before the line's ship date is ignored (carriers reuse numbers, especially 10-digit DHL ones).
+How refreshing works for every carrier:
+
+- Only lines whose carrier has a connection are looked up. Each distinct tracking number is looked up once and applied to every PO line that shares it, at most every 6 hours, in batches of 20.
+- A delivery from tracking replaces report-based estimates but never a date entered by hand. A delivery dated before the line's ship date is ignored (carriers reuse numbers).
 - Scheduled refresh: Pages Functions can't run on cron, so add a small Worker with a Cron Trigger that calls `refreshTracking()` in a loop.
+
+### FedEx
+
+Uses the FedEx Track API (`server/tracking/fedex.ts`): an OAuth token (cached for its hour), then up to 30 numbers per call, each with a ship-date window of ±30 days around the line's ETD so reused numbers resolve to the right shipment.
+
+1. At [developer.fedex.com](https://developer.fedex.com), create a project with the **Track API** and copy its sandbox API key (client ID) and secret key.
+2. Locally, add them to `.dev.vars` (see `.dev.vars.example`) and check them without touching the database:
+   ```sh
+   pnpm fedex:check <tracking number> [ship date YYYY-MM-DD] …
+   ```
+   The sandbox only knows FedEx's test tracking numbers (listed in the Track API docs), not real shipments.
+3. For real shipments, request production keys for the project (FedEx asks for a FedEx account number), then set them on Cloudflare:
+   ```sh
+   pnpm wrangler pages secret put FEDEX_CLIENT_ID
+   pnpm wrangler pages secret put FEDEX_CLIENT_SECRET
+   pnpm wrangler pages secret put FEDEX_ENV      # production
+   ```
+   `/api/health` shows `"FEDEX": "ok (production)"`. Without `FEDEX_ENV` the app uses the sandbox.
+
+FedEx keeps tracking history for about 90 days after delivery, so older closed lines may come back "not found" and keep their report-based estimates.
 
 ## Scripts
 
@@ -112,3 +134,4 @@ Carrier API connections (FedEx, DHL, UPS, DSV, …) will be added one carrier at
 | `pnpm typecheck` | TypeScript |
 | `pnpm db:generate` | New migration after editing `server/db/schema.ts` |
 | `pnpm db:studio` | Browse the DB |
+| `pnpm fedex:check <number> [ship date]` | Look up FedEx numbers with the keys in `.dev.vars`, without touching the DB |

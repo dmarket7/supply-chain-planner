@@ -10,7 +10,7 @@ import { refreshTracking } from '../tracking/refresh';
 export const trackingRoutes = new Hono<AppEnv>();
 
 trackingRoutes.get('/status', (c) => {
-  const providers = getProviders(c.env).map((p) => p.name);
+  const providers = getProviders(c.env).map((p) => ({ name: p.name, carriers: p.carriers }));
   return c.json({ configured: providers.length > 0, providers });
 });
 

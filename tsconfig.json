@@ -15,5 +15,5 @@
     "noUnusedParameters": true,
     "types": ["vite/client", "@cloudflare/workers-types", "node"]
   },
-  "include": ["src", "shared", "server", "functions", "tests", "vite.config.ts", "drizzle.config.ts"]
+  "include": ["src", "shared", "server", "functions", "tests", "scripts/**/*.ts", "vite.config.ts", "drizzle.config.ts"]
 }

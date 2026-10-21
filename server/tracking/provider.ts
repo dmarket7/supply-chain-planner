@@ -44,6 +44,8 @@ export class TrackingRateLimitError extends Error {
  */
 export interface TrackingProvider {
   name: string;
+  /** Carrier names (as stored on shipments) this provider handles; used to pick which numbers to refresh. */
+  carriers: readonly string[];
   supports(req: TrackingRequest): boolean;
   /** Looks up each request; results for numbers the provider couldn't find are omitted. */
   track(reqs: TrackingRequest[]): Promise<TrackingResult[]>;
