@@ -185,5 +185,5 @@ FedEx keeps tracking history for about 90 days after delivery, so older closed l
 | `pnpm typecheck` | TypeScript |
 | `pnpm db:generate` | New migration after editing `server/db/schema.ts` |
 | `pnpm db:studio` | Browse the DB |
-| `pnpm trackingmore:couriers [names] [--detect numbers]` | TrackingMore courier coverage with the key in `.dev.vars` (read-only, no credits) |
+| `pnpm trackingmore:couriers [names] [--detect numbers]` | TrackingMore courier coverage with the key in `.env` (read-only, no credits) |
 | `pnpm fedex:check <number> [ship date]` | Look up FedEx numbers with the keys in `.dev.vars`, without touching the DB |
