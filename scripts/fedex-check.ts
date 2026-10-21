@@ -1,22 +1,16 @@
 /**
- * Looks up FedEx tracking numbers with the credentials in .dev.vars and prints what the app would save.
+ * Looks up FedEx tracking numbers with the credentials in .env and prints what the app would save.
  * Touches no database. Usage: pnpm fedex:check <tracking number> [ship date YYYY-MM-DD] [more numbers…]
  */
-import fs from 'node:fs';
 import { fedexProvider, type FedExEnvironment } from '../server/tracking/fedex';
+import { loadEnv } from './env';
 
-const vars = Object.fromEntries(
-  (fs.existsSync('.dev.vars') ? fs.readFileSync('.dev.vars', 'utf8') : '')
-    .split('\n')
-    .map((l) => l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/))
-    .filter((m): m is RegExpMatchArray => !!m)
-    .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]),
-);
+const vars = loadEnv();
 const clientId = vars.FEDEX_CLIENT_ID;
 const clientSecret = vars.FEDEX_CLIENT_SECRET;
 const environment = (vars.FEDEX_ENV || 'sandbox').toLowerCase() as FedExEnvironment;
 if (!clientId || !clientSecret) {
-  console.error('Add FEDEX_CLIENT_ID and FEDEX_CLIENT_SECRET (and optionally FEDEX_ENV) to .dev.vars first.');
+  console.error('Add FEDEX_CLIENT_ID and FEDEX_CLIENT_SECRET (and optionally FEDEX_ENV) to .env first.');
   process.exit(1);
 }
 
