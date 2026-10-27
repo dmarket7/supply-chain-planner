@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { addDays, todayIso } from '../../../shared/dates';
 import { estimatedShare, mergeSummaries, type PalletSummary } from '../../../shared/pallets';
@@ -19,8 +20,9 @@ function rangeSum(days: InboundDay[], from: string, to: string): PalletSummary {
 }
 
 export function InboundByDayPage() {
-  const [from, setFrom] = useState(addDays(todayIso(), -7));
-  const [to, setTo] = useState(addDays(todayIso(), 21));
+  const [params] = useSearchParams();
+  const [from, setFrom] = useState(params.get('from') ?? addDays(todayIso(), -7));
+  const [to, setTo] = useState(params.get('to') ?? addDays(todayIso(), 21));
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [metric, setMetric] = useStoredChoice<Metric>('inbound-metric', METRICS, 'pallets');
@@ -52,7 +54,7 @@ export function InboundByDayPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={branch ? `Inbound by day · ${branch}` : 'Inbound by day'}
+        title={branch ? `Inbound · ${branch}` : 'Inbound'}
         description="PO lines grouped by expected arrival (carrier ETA when known, otherwise the supplier's ETA). Lines awaiting shipment have no date yet and are listed on the Shipments page."
         actions={
           <>

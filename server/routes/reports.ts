@@ -1,14 +1,17 @@
 import { Hono } from 'hono';
-import { and, asc, eq, getTableColumns, gte, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNotNull, lte, sql } from 'drizzle-orm';
 import { addDays, todayIso } from '../../shared/dates';
-import type { ArrivalsResponse, InboundResponse, OutboundOrderInput, OutboundResponse, Shipment } from '../../shared/types';
+import type { ArrivalsResponse, InboundResponse, OutboundResponse, Shipment, SupplyResponse } from '../../shared/types';
 import { getDb } from '../db/client';
-import { outboundOrders, palletRatios, promisedDateHistory, shipments, suppliers } from '../db/schema';
+import { dashboard, supplyParts, withSupply } from '../dashboard';
+import { imports, promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
-import { currentSnapshot, snapshotInfo } from '../outbound';
+import { inventoryInfo } from '../inventory';
+import { snapshotInfo } from '../outbound';
 import { loadRatioLookup } from '../palletRatios';
 import { groupInboundByDay, groupInboundByPart, outboundReport, supplierScorecard, toArrivalEntry, withPallets } from '../reports';
-import { branchFilter, NO_BRANCH, shipmentColumns } from './common';
+import { loadSupply } from '../supply';
+import { branchFilter, shipmentColumns } from './common';
 
 export const reportsRoutes = new Hono<AppEnv>();
 
@@ -65,37 +68,45 @@ reportsRoutes.get('/arrivals', async (c) => {
   return c.json(body);
 });
 
-/** Open sales orders from the current ODM Open Order snapshot, in pallets and trucks. */
+/** Open sales orders from the current ODM Open Order snapshot, in pallets and trucks, with whether they can ship. */
 reportsRoutes.get('/outbound', async (c) => {
   const today = todayIso();
   const from = c.req.query('from') ?? addDays(today, -7);
   const to = c.req.query('to') ?? addDays(today, 28);
-  const branch = c.req.query('branch');
   const db = getDb(c.env.DATABASE_URL);
-  const snap = await currentSnapshot(db);
-  if (!snap) {
-    const body: OutboundResponse = { from, to, snapshot: null, ...outboundReport([], from, to, today) };
-    return c.json(body);
-  }
-  const { snapshotId: _s, ...orderColumns } = getTableColumns(outboundOrders);
-  const [rows, ratios, info] = await Promise.all([
-    db
-      .select({ ...orderColumns, itemName: palletRatios.itemName })
-      .from(outboundOrders)
-      .leftJoin(palletRatios, eq(palletRatios.partNumber, outboundOrders.cpn))
-      .where(
-        and(
-          eq(outboundOrders.snapshotId, snap.id),
-          !branch ? undefined : branch === NO_BRANCH ? isNull(outboundOrders.warehouse) : eq(outboundOrders.warehouse, branch),
-        ),
-      ),
-    loadRatioLookup(db),
-    snapshotInfo(db, snap),
-  ]);
-  const orders = rows.map((o) => ({
-    ...(o as OutboundOrderInput & { id: number; itemName: string | null }),
-    pallets: ratios.line(o.cpn, o.businessGroup, o.quantity),
-  }));
-  const body: OutboundResponse = { from, to, snapshot: info, ...outboundReport(orders, from, to, snap.reportDate) };
+  const [supply, ratios] = await Promise.all([loadSupply(db, c.req.query('branch')), loadRatioLookup(db)]);
+  const { outbound: snap, inventory } = supply;
+  const orders = withSupply(supply, ratios);
+  const body: OutboundResponse = {
+    from,
+    to,
+    snapshot: snap ? await snapshotInfo(db, snap) : null,
+    inventoryReportDate: inventory?.reportDate ?? null,
+    ...outboundReport(orders, from, to, snap?.reportDate ?? today),
+  };
   return c.json(body);
+});
+
+/** Stock and open demand per part and site, with each order's readiness and the inbound lines. */
+reportsRoutes.get('/supply', async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const supply = await loadSupply(db, c.req.query('branch'));
+  const body: SupplyResponse = {
+    inventory: supply.inventory ? inventoryInfo(supply.inventory) : null,
+    outboundReportDate: supply.outbound?.reportDate ?? null,
+    parts: supplyParts(supply),
+  };
+  return c.json(body);
+});
+
+/** The home dashboard: flow by week, and where things are stuck. */
+reportsRoutes.get('/dashboard', async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const branch = c.req.query('branch');
+  const [supply, ratios, [lastImport]] = await Promise.all([
+    loadSupply(db, branch),
+    loadRatioLookup(db),
+    db.select({ reportDate: imports.reportDate }).from(imports).where(isNotNull(imports.completedAt)).orderBy(desc(imports.reportDate)).limit(1),
+  ]);
+  return c.json(dashboard(supply, ratios, lastImport?.reportDate ?? null, todayIso()));
 });

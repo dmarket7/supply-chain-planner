@@ -101,7 +101,7 @@ export function supplierScorecard(entries: ArrivalLogEntry[], includeAssumed = f
     .sort((a, b) => a.onTimePct - b.onTimePct || b.arrivals - a.arrivals);
 }
 
-function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+export function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   const out = new Map<string, T[]>();
   for (const item of items) {
     const k = key(item);
@@ -113,7 +113,7 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 }
 
 const NO_SHIP_TO = '(no ship-to)';
-const shipToOf = (o: OutboundOrder) => o.shipTo ?? NO_SHIP_TO;
+export const shipToOf = (o: OutboundOrder) => o.shipTo ?? NO_SHIP_TO;
 
 /** Trucks for orders that share trucks per ship-to and day. */
 function trucksFor(orders: OutboundOrder[]): TruckSummary {
@@ -122,10 +122,18 @@ function trucksFor(orders: OutboundOrder[]): TruckSummary {
   return sum;
 }
 
-function backlog(orders: OutboundOrder[]): OutboundBacklog {
+export function backlog(orders: OutboundOrder[]): OutboundBacklog {
   const pallets = emptySummary();
-  for (const o of orders) addLine(pallets, o.pallets, o.quantity);
-  return { orders: orders.length, pallets, trucks: trucksFor(orders) };
+  const readiness: OutboundBacklog['readiness'] = {};
+  for (const o of orders) {
+    addLine(pallets, o.pallets, o.quantity);
+    if (!o.supply) continue;
+    const r = (readiness[o.supply.readiness] ??= { orders: 0, units: 0, palletEq: 0 });
+    r.orders++;
+    r.units += o.quantity;
+    r.palletEq += o.pallets.palletEq ?? 0;
+  }
+  return { orders: orders.length, pallets, trucks: trucksFor(orders), readiness };
 }
 
 const earliest = (a: string | null, b: string | null) => (!a ? b : !b ? a : a < b ? a : b);

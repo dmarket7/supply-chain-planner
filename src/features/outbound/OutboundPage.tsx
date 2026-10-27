@@ -1,11 +1,13 @@
 import { Fragment, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { addDays, todayIso } from '../../../shared/dates';
 import { estimatedShare, mergeSummaries, mergeTrucks } from '../../../shared/pallets';
+import { READINESS, READINESS_LABELS, type Readiness } from '../../../shared/supply';
 import type { OutboundOrder, OutboundPart, OutboundResponse, OutboundShipTo } from '../../../shared/types';
 import { useBranch } from '../../app/branch';
 import { DataQualityNote, MetricToggle, useStoredChoice } from '../../components/pallets';
+import { READINESS_GROUPS, ReadinessBadge, ReadinessBar, readinessReason } from '../../components/readiness';
 import { BasisBadge, Card, DateInput, Empty, ErrorNote, PageHeader, StatTile, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
 import { formatDate, formatPallets } from '../../lib/format';
@@ -34,12 +36,36 @@ function OrderStatus({ status }: { status: string | null }) {
 }
 
 const right = `${tdCls} text-right tabular-nums`;
+
+/** `?readiness=late,short` limits the order lists to those states. */
+function parseReadiness(v: string | null): Readiness[] {
+  return (v ?? '').split(',').filter((r): r is Readiness => (READINESS as readonly string[]).includes(r));
+}
+const READINESS_FILTERS = [
+  { label: 'All orders', value: '' },
+  { label: 'At risk', value: 'late,short' },
+  { label: 'No ETA', value: 'noEta' },
+  { label: 'Short', value: 'short' },
+];
+const canShipShare = (s: OutboundShipTo) => {
+  const total = Object.values(s.readiness).reduce((n, r) => n + (r?.units ?? 0), 0);
+  const ok = READINESS_GROUPS[0].members.reduce((n, r) => n + (s.readiness[r]?.units ?? 0), 0);
+  return total ? Math.round((ok / total) * 100) : null;
+};
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
 export function OutboundPage() {
   const today = todayIso();
-  const [from, setFrom] = useState(addDays(today, -7));
-  const [to, setTo] = useState(addDays(today, 28));
+  const [params, setParams] = useSearchParams();
+  const [from, setFrom] = useState(params.get('from') ?? addDays(today, -7));
+  const [to, setTo] = useState(params.get('to') ?? addDays(today, 28));
+  const readiness = parseReadiness(params.get('readiness'));
+  const setReadiness = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set('readiness', value);
+    else next.delete('readiness');
+    setParams(next, { replace: true });
+  };
   const [metric, setMetric] = useStoredChoice<OutboundMetric>('outbound-metric', OUTBOUND_METRICS, 'pallets');
   const { branch } = useBranch();
 
@@ -56,6 +82,10 @@ export function OutboundPage() {
   const estPct = Math.round(estimatedShare(inRange) * 100);
   const parts = [...new Map(shipTos.flatMap((s) => s.parts).map((p) => [p.cpn ?? p.mpn, p])).values()];
   const snapshot = data?.snapshot;
+  const hasInventory = !!data?.inventoryReportDate;
+  const matching = readiness.length
+    ? shipTos.flatMap((s) => s.lines).filter((o) => o.supply && readiness.includes(o.supply.readiness)).sort((a, b) => a.shipDate!.localeCompare(b.shipDate!))
+    : [];
 
   return (
     <div className="space-y-6">
@@ -87,6 +117,7 @@ export function OutboundPage() {
                   {snapshot.changes.added.toLocaleString()} new, {snapshot.changes.quantityChanged.toLocaleString()} with a changed quantity
                 </>
               )}
+              {hasInventory ? ` · stock checked against the ${formatDate(data!.inventoryReportDate)} inventory` : ' · import a report with the Inventory Summary tab to check stock'}
             </p>
           )}
 
@@ -119,14 +150,41 @@ export function OutboundPage() {
             )}
           </Card>
 
-          {shipTos.length > 0 && <ShipToTable shipTos={shipTos} />}
+          {hasInventory && (
+            <div role="group" aria-label="Show orders" className="flex flex-wrap gap-2">
+              {READINESS_FILTERS.map((f) => {
+                const active = readiness.join(',') === f.value;
+                return (
+                  <button
+                    key={f.label}
+                    onClick={() => setReadiness(f.value)}
+                    aria-pressed={active}
+                    className={`rounded-full border px-3 py-1 text-sm ${active ? 'border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900' : 'border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {readiness.length > 0 ? (
+            <Card className="overflow-x-auto">
+              <h2 className="font-medium">
+                {matching.length.toLocaleString()} {readiness.map((r) => READINESS_LABELS[r].toLowerCase()).join(' or ')} orders in this range
+              </h2>
+              <OrdersTable orders={matching} showShipTo />
+            </Card>
+          ) : (
+            shipTos.length > 0 && <ShipToTable shipTos={shipTos} showReadiness={hasInventory} />
+          )}
         </>
       )}
     </div>
   );
 }
 
-function ShipToTable({ shipTos }: { shipTos: OutboundShipTo[] }) {
+function ShipToTable({ shipTos, showReadiness }: { shipTos: OutboundShipTo[]; showReadiness: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <Card className="overflow-x-auto p-0">
@@ -139,6 +197,7 @@ function ShipToTable({ shipTos }: { shipTos: OutboundShipTo[] }) {
         <thead>
           <tr>
             <th className={thCls}>Ship to</th>
+            {showReadiness && <th className={`${thCls} whitespace-nowrap`}>Can ship</th>}
             {['Orders', 'Units', 'Pallet-eq', 'Full + partial', 'Truckloads', 'Trucks needed', 'Estimated', 'Next ship date'].map((h) => (
               <th key={h} className={`${thCls} whitespace-nowrap text-right`}>{h}</th>
             ))}
@@ -155,6 +214,14 @@ function ShipToTable({ shipTos }: { shipTos: OutboundShipTo[] }) {
                     <span className="mr-1 inline-block w-3 text-slate-400">{expanded ? '▾' : '▸'}</span>
                     {s.shipTo}
                   </td>
+                  {showReadiness && (
+                    <td className={tdCls}>
+                      <div className="flex items-center gap-2">
+                        <ReadinessBar readiness={s.readiness} />
+                        <span className="tabular-nums text-xs text-slate-500">{canShipShare(s) ?? '—'}%</span>
+                      </div>
+                    </td>
+                  )}
                   <td className={right}>{s.orders}</td>
                   <td className={right}>{s.pallets.units.toLocaleString()}</td>
                   <td className={right}>{formatPallets(s.pallets.palletEq)}</td>
@@ -168,7 +235,7 @@ function ShipToTable({ shipTos }: { shipTos: OutboundShipTo[] }) {
                 </tr>
                 {expanded && (
                   <tr>
-                    <td colSpan={9} className="border-b border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                    <td colSpan={showReadiness ? 10 : 9} className="border-b border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
                       <PartsTable parts={s.parts} />
                       <OrdersTable orders={s.lines} />
                     </td>
@@ -231,7 +298,7 @@ function PartsTable({ parts }: { parts: OutboundPart[] }) {
 
 const SHOWN_ORDERS = 25;
 
-function OrdersTable({ orders }: { orders: OutboundOrder[] }) {
+function OrdersTable({ orders, showShipTo = false }: { orders: OutboundOrder[]; showShipTo?: boolean }) {
   const [all, setAll] = useState(false);
   const rows = all ? orders : orders.slice(0, SHOWN_ORDERS);
   return (
@@ -240,13 +307,17 @@ function OrdersTable({ orders }: { orders: OutboundOrder[] }) {
       <table className={tableCls}>
         <thead>
           <tr>
-            {['Wintec SO#', 'EMS PO#', 'Status', 'Ship date', 'Dock date', 'MPN'].map((h) => <th key={h} className={`${thCls} whitespace-nowrap`}>{h}</th>)}
+            {[...(showShipTo ? ['Ship to'] : []), 'Wintec SO#', 'EMS PO#', 'Status', 'Ship date', 'Dock date', 'MPN'].map((h) => (
+              <th key={h} className={`${thCls} whitespace-nowrap`}>{h}</th>
+            ))}
             {['Qty', 'Pallets'].map((h) => <th key={h} className={`${thCls} text-right`}>{h}</th>)}
+            {orders.some((o) => o.supply) && <th className={thCls}>Can it ship?</th>}
           </tr>
         </thead>
         <tbody>
           {rows.map((o) => (
             <tr key={o.id}>
+              {showShipTo && <td className={tdCls}>{o.shipTo ?? '—'}</td>}
               <td className={`${tdCls} font-mono text-xs`}>{o.soNumber}</td>
               <td className={`${tdCls} font-mono text-xs`}>{o.emsPo ?? '—'}</td>
               <td className={tdCls}><OrderStatus status={o.status} /></td>
@@ -263,6 +334,12 @@ function OrdersTable({ orders }: { orders: OutboundOrder[] }) {
                 {o.pallets.palletEq != null && <span className="mr-2">{formatPallets(o.pallets.palletEq)}</span>}
                 {o.pallets.basis !== 'real' && <BasisBadge basis={o.pallets.basis} estimate={o.pallets.estimate} short />}
               </td>
+              {o.supply && (
+                <td className={tdCls}>
+                  <ReadinessBadge detail={o.supply} shipDate={o.shipDate} />
+                  <div className="mt-0.5 text-xs text-slate-500">{readinessReason(o.supply, o.shipDate)}</div>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

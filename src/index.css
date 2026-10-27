@@ -10,6 +10,12 @@
   --series-1-soft: #c7dcf5; /* estimated (hatched with series-1) */
   --series-2: #eb6834; /* LTL */
   --series-3: #1baf7a; /* unspecified */
+  /* Outbound readiness (validated as a set, with --series-1 for inbound) */
+  --ready: #0ca30c; /* can ship */
+  --waiting: #8f6bd6; /* waiting on inbound */
+  --late: #e5a00d; /* inbound late */
+  --short: #d03b3b; /* short */
+  --unknown: #8b95a5; /* no inventory imported */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -22,6 +28,8 @@
     --series-1-soft: #1d3a5e;
     --series-2: #d95926;
     --series-3: #199e70;
+    --waiting: #9085e9;
+    --late: #c98500;
   }
 }
 

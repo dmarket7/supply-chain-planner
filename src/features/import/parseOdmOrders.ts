@@ -1,7 +1,8 @@
-import * as XLSX from 'xlsx';
+import type * as XLSX from 'xlsx';
 import type { OutboundOrderInput } from '../../../shared/types';
 import { toIsoDate } from './normalize';
-import { detectHeaderRow, parseSheet, type Cell } from './parseWorkbook';
+import { parseSheet, type Cell } from './parseWorkbook';
+import { findSheet, norm, number, text } from './sheetColumns';
 
 /** Columns of the ODM Open Order tab, matched by header (case and punctuation ignored). */
 const COLUMNS = {
@@ -28,40 +29,15 @@ const REQUIRED: Column[] = ['soNumber', 'shipTo', 'cpn', 'quantity'];
 /** Ship dates this far out are placeholders for "not scheduled yet" (the report uses 2099). */
 const PLACEHOLDER_YEAR = 2090;
 
-const norm = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-function text(v: Cell): string | null {
-  const s = v == null ? '' : String(v).replace(/\s+/g, ' ').trim();
-  return s ? s : null;
-}
-
-function number(v: Cell): number | null {
-  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v.replace(/,/g, '')) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
-
 /** A real ship date, or null for blanks and 2099-style placeholders. */
 function shipDate(v: Cell): string | null {
   const d = toIsoDate(v);
   return d && Number(d.slice(0, 4)) < PLACEHOLDER_YEAR ? d : null;
 }
 
-/** Headers of the first rows only, so finding the tab doesn't parse every sheet. */
-function headersOf(ws: XLSX.WorkSheet): Set<string> {
-  if (!ws?.['!ref']) return new Set();
-  const range = XLSX.utils.decode_range(ws['!ref']);
-  range.e.r = Math.min(range.e.r, range.s.r + 20);
-  const grid = XLSX.utils.sheet_to_json<Cell[]>(ws, { header: 1, range, defval: null, blankrows: false });
-  return new Set((grid[detectHeaderRow(grid)] ?? []).map((h) => norm(String(h ?? ''))));
-}
-
 /** The ODM Open Order tab: by name first, else any sheet with the required columns. */
 export function findOdmSheet(wb: XLSX.WorkBook): string | null {
-  const names = [...wb.SheetNames].sort((a, b) => Number(!/odm/i.test(a)) - Number(!/odm/i.test(b)));
-  return names.find((n) => {
-    const h = headersOf(wb.Sheets[n]);
-    return REQUIRED.every((c) => h.has(COLUMNS[c]));
-  }) ?? null;
+  return findSheet(wb, REQUIRED.map((c) => COLUMNS[c]), /odm/i);
 }
 
 export interface ParsedOdmOrders {

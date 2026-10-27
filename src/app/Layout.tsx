@@ -3,15 +3,23 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { BranchSelect } from './branch';
 import { useSession } from './session';
 
+/** Day-to-day views first; setup and history pages after the divider. */
 const NAV = [
-  { to: '/', label: 'Inbound by day', end: true },
+  { to: '/', label: 'Dashboard', end: true },
+  { to: '/inbound', label: 'Inbound' },
   { to: '/outbound', label: 'Outbound' },
+  { to: '/inventory', label: 'Inventory' },
   { to: '/shipments', label: 'Shipments' },
+];
+const MORE_NAV = [
+  { to: '/import', label: 'Import report' },
   { to: '/arrivals', label: 'Arrival log' },
   { to: '/tracking', label: 'Carrier tracking' },
-  { to: '/import', label: 'Import report' },
   { to: '/settings/pallets', label: 'Pallet ratios' },
 ];
+
+const navCls = (active: boolean, size = 'text-sm') =>
+  `rounded-md px-3 py-1.5 ${size} ${active ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`;
 
 export function Layout() {
   const { user, signOut } = useSession();
@@ -20,16 +28,15 @@ export function Layout() {
       <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
           <span className="font-semibold">Supply Chain Planner</span>
-          <nav className="flex flex-wrap gap-1">
+          <nav className="flex flex-wrap items-center gap-1">
             {NAV.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                end={n.end}
-                className={({ isActive }) =>
-                  `rounded-md px-3 py-1.5 text-sm ${isActive ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`
-                }
-              >
+              <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => navCls(isActive)}>
+                {n.label}
+              </NavLink>
+            ))}
+            <span className="mx-2 h-5 w-px bg-slate-200 dark:bg-slate-800" aria-hidden />
+            {MORE_NAV.map((n) => (
+              <NavLink key={n.to} to={n.to} className={({ isActive }) => navCls(isActive, 'text-xs')}>
                 {n.label}
               </NavLink>
             ))}
