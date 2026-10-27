@@ -14,7 +14,11 @@ const primary = 'rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-wh
 const input = 'w-24 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-slate-700 dark:bg-slate-900';
 
 export const RATIO_FILTERS = {
-  'needs-data': { label: 'Needs data', hint: 'Estimated or no ratio, with open inbound', test: (r: PalletRatioRow) => r.basis !== 'real' && r.openLines > 0 },
+  'needs-data': {
+    label: 'Needs data',
+    hint: 'Estimated or no ratio, with open inbound or outbound',
+    test: (r: PalletRatioRow) => r.basis !== 'real' && (r.openLines > 0 || r.outboundOrders > 0),
+  },
   all: { label: 'All', hint: 'Every part', test: () => true },
   estimated: { label: 'Estimated', hint: 'Using a commodity average', test: (r: PalletRatioRow) => r.basis === 'estimated' },
   none: { label: 'No ratio', hint: 'No ratio for the part or its commodity', test: (r: PalletRatioRow) => r.basis === 'none' },
@@ -46,7 +50,7 @@ export function PalletRatiosPage() {
     return (data?.rows ?? [])
       .filter(RATIO_FILTERS[filter].test)
       .filter((r) => !q || [r.partNumber, r.itemName, r.commodity].some((v) => v?.toLowerCase().includes(q)))
-      .sort((a, b) => b.openUnits - a.openUnits || a.partNumber.localeCompare(b.partNumber));
+      .sort((a, b) => b.openUnits + b.outboundUnits - (a.openUnits + a.outboundUnits) || a.partNumber.localeCompare(b.partNumber));
   }, [data, filter, search]);
 
   return (
@@ -79,7 +83,7 @@ export function PalletRatiosPage() {
             className="ml-auto w-64 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
           />
         </div>
-        <p className="px-4 pb-2 text-xs text-slate-500">{RATIO_FILTERS[filter].hint}. Sorted by open inbound units.</p>
+        <p className="px-4 pb-2 text-xs text-slate-500">{RATIO_FILTERS[filter].hint}. Sorted by open inbound + outbound units.</p>
         {isLoading ? (
           <div className="p-4 text-sm text-slate-500">Loading…</div>
         ) : !rows.length ? (
@@ -256,7 +260,7 @@ function RatioTable({ rows }: { rows: PalletRatioRow[] }) {
     <table className={tableCls}>
       <thead>
         <tr>
-          {['Part', 'Item', 'Commodity', 'Units / pallet', 'Pallets / truck', 'Units / truck', 'Double stack', 'Open inbound', 'Source', ''].map((h) => (
+          {['Part', 'Item', 'Commodity', 'Units / pallet', 'Pallets / truck', 'Units / truck', 'Double stack', 'Open inbound', 'Open outbound', 'Source', ''].map((h) => (
             <th key={h} className={`${thCls} whitespace-nowrap`}>{h}</th>
           ))}
         </tr>
@@ -303,6 +307,9 @@ function ViewRow({ row: r, onEdit }: { row: PalletRatioRow; onEdit: () => void }
       <td className={tdCls}>{r.canDoubleStack ? 'Yes' : ''}</td>
       <td className={`${tdCls} whitespace-nowrap tabular-nums`}>
         {r.openLines ? `${r.openUnits.toLocaleString()} units · ${r.openLines} line${r.openLines === 1 ? '' : 's'}` : '—'}
+      </td>
+      <td className={`${tdCls} whitespace-nowrap tabular-nums`}>
+        {r.outboundOrders ? `${r.outboundUnits.toLocaleString()} units · ${r.outboundOrders} order${r.outboundOrders === 1 ? '' : 's'}` : '—'}
       </td>
       <td className={`${tdCls} text-xs`}>
         {r.source === 'manual' ? (
@@ -396,7 +403,7 @@ function EditRow({ row: r, onDone }: { row: PalletRatioRow; onDone: () => void }
       <td className={tdCls}>
         <input type="checkbox" checked={stack} onChange={(e) => setStack(e.target.checked)} aria-label="Can double stack" />
       </td>
-      <td className={`${tdCls} text-xs text-slate-500`} colSpan={2}>
+      <td className={`${tdCls} text-xs text-slate-500`} colSpan={3}>
         {invalid ? <span className="text-red-700 dark:text-red-300">Use a number above 0, or leave blank.</span> : 'Saved as a manual value; uploads won’t overwrite it.'}
         {save.error && <ErrorNote error={save.error} />}
       </td>

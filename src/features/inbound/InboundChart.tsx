@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts';
 import type { InboundDay } from '../../../shared/types';
+import { EstimatedHatch, ESTIMATED_FILL, Legend, tooltipBoxCls, TooltipRow as Row } from '../../components/chart';
 import { formatDate, formatPallets } from '../../lib/format';
 
 export const METRICS = ['pallets', 'units', 'lines'] as const;
@@ -15,7 +16,7 @@ const SERIES = {
   units: [{ key: 'units', label: 'Units', color: 'var(--series-1)' }],
   pallets: [
     { key: 'real', label: 'Real ratio', color: 'var(--series-1)' },
-    { key: 'estimated', label: 'Estimated (commodity average)', color: 'url(#estimated-hatch)' },
+    { key: 'estimated', label: 'Estimated (commodity average)', color: ESTIMATED_FILL },
   ],
 } as const;
 
@@ -38,23 +39,13 @@ function toPoints(days: InboundDay[]): Point[] {
   });
 }
 
-function Row({ color, label, value }: { color?: string; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      {color && <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: color }} />}
-      <span className="text-slate-600 dark:text-slate-300">{label}</span>
-      <span className="ml-auto pl-4 tabular-nums">{value}</span>
-    </div>
-  );
-}
-
 function tooltipFor(metric: Metric) {
   return function ChartTooltip({ active, payload }: TooltipContentProps) {
     if (!active || !payload?.length) return null;
     const p = payload[0].payload as Point;
     const { pallets } = p.day;
     return (
-      <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm shadow-md dark:border-slate-700 dark:bg-slate-900">
+      <div className={tooltipBoxCls}>
         <div className="mb-1 font-medium">{formatDate(p.date, { weekday: 'short' })}</div>
         {metric === 'lines' &&
           SERIES.lines.filter((s) => (p[s.key] as number) > 0).map((s) => <Row key={s.key} color={s.color} label={s.label} value={String(p[s.key])} />)}
@@ -90,29 +81,8 @@ export function InboundChart({ days, metric, onSelectDay }: { days: InboundDay[]
   const present = series.filter((s) => data.some((p) => (p[s.key] as number) > 0));
   return (
     <div>
-      {present.length > 1 && (
-        <div className="mb-2 flex flex-wrap gap-4 text-sm" style={{ color: 'var(--text-secondary)' }}>
-          {present.map((s) => (
-            <span key={s.key} className="flex items-center gap-1.5">
-              {s.key === 'estimated' ? (
-                <svg width="10" height="10" aria-hidden><rect width="10" height="10" rx="2" fill="url(#estimated-hatch)" /></svg>
-              ) : (
-                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-              )}
-              {s.label}
-            </span>
-          ))}
-        </div>
-      )}
-      {/* The hatch pattern lives outside the chart so the legend swatch can use it too. */}
-      <svg width="0" height="0" className="absolute" aria-hidden>
-        <defs>
-          <pattern id="estimated-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width="6" height="6" fill="var(--series-1-soft)" />
-            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--series-1)" strokeWidth="2.5" />
-          </pattern>
-        </defs>
-      </svg>
+      <Legend items={present} />
+      <EstimatedHatch />
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="20%">

@@ -5,6 +5,7 @@ import { useSession } from './session';
 
 const NAV = [
   { to: '/', label: 'Inbound by day', end: true },
+  { to: '/outbound', label: 'Outbound' },
   { to: '/shipments', label: 'Shipments' },
   { to: '/arrivals', label: 'Arrival log' },
   { to: '/tracking', label: 'Carrier tracking' },

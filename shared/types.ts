@@ -1,4 +1,4 @@
-import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues } from './pallets';
+import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues, TruckSummary } from './pallets';
 import type { ProgressCounts } from './progress';
 import { z } from 'zod';
 
@@ -424,6 +424,9 @@ export interface PalletRatioRow {
   /** Open inbound lines (not yet arrived) and their units. */
   openLines: number;
   openUnits: number;
+  /** Open sales orders in the current ODM Open Order snapshot and their units. */
+  outboundOrders: number;
+  outboundUnits: number;
 }
 
 export interface PalletRatiosResponse {
@@ -488,4 +491,125 @@ export interface SupplierScore {
 export interface ArrivalsResponse {
   entries: ArrivalLogEntry[];
   scorecard: SupplierScore[];
+}
+
+/* ---------- Outbound (ODM Open Order) ---------- */
+
+export const OUTBOUND_CHUNK_SIZE = 500;
+
+const nullableText = z.string().nullable();
+const nullableDate = isoDate.nullable();
+
+/** One sales order line read from the ODM Open Order tab, after summing its reservation pieces. */
+export const outboundOrderInputSchema = z.object({
+  soNumber: z.string().min(1),
+  emsPo: nullableText,
+  status: nullableText,
+  warehouse: nullableText,
+  shipTo: nullableText,
+  cpn: nullableText,
+  mpn: nullableText,
+  manufacturer: nullableText,
+  businessGroup: nullableText,
+  packagingType: nullableText,
+  quantity: z.number().nonnegative(),
+  totalPrice: z.number().nullable(),
+  sourceRows: z.number().int().positive(),
+  shipDate: nullableDate,
+  shipDateSource: z.enum(['confirmed', 'scheduled']).nullable(),
+  scheduledShipDate: nullableDate,
+  confirmedShipDate: nullableDate,
+  dockDate: nullableDate,
+  poReceiptDate: nullableDate,
+});
+export type OutboundOrderInput = z.infer<typeof outboundOrderInputSchema>;
+
+export const startOutboundSchema = z.object({
+  fileName: z.string().min(1),
+  reportDate: isoDate,
+  rowCount: z.number().int().nonnegative(),
+  orderCount: z.number().int().nonnegative(),
+  skippedQuotations: z.number().int().nonnegative(),
+});
+
+export const outboundOrdersChunkSchema = z.object({
+  orders: z.array(outboundOrderInputSchema).min(1).max(OUTBOUND_CHUNK_SIZE),
+});
+
+/** How the current snapshot differs from the one before it, by Wintec SO#. */
+export interface OutboundChanges {
+  previousReportDate: string;
+  /** SOs in the previous report that are gone: shipped or cancelled. */
+  noLongerListed: number;
+  added: number;
+  quantityChanged: number;
+}
+
+export interface OutboundSnapshotInfo {
+  id: number;
+  fileName: string;
+  reportDate: string;
+  rowCount: number;
+  orderCount: number;
+  skippedQuotations: number;
+  changes: OutboundChanges | null;
+}
+
+export interface OutboundOrder extends OutboundOrderInput {
+  id: number;
+  /** From the Pallet Ratios file, when the part is in it. */
+  itemName: string | null;
+  pallets: LinePallets;
+}
+
+export interface OutboundDay {
+  date: string;
+  orders: number;
+  pallets: PalletSummary;
+  /** Orders to the same ship-to on this day share trucks. */
+  trucks: TruckSummary;
+}
+
+/** One part (MPN) going to one ship-to. */
+export interface OutboundPart {
+  mpn: string | null;
+  cpn: string | null;
+  itemName: string | null;
+  businessGroup: string | null;
+  basis: PalletBasis;
+  unitsPerPallet: number | null;
+  estimate?: { commodity: string; parts: number };
+  orders: number;
+  pallets: PalletSummary;
+  /** Units per reservation status. */
+  unitsByStatus: Record<string, number>;
+  nextShipDate: string | null;
+}
+
+export interface OutboundShipTo {
+  shipTo: string;
+  orders: number;
+  pallets: PalletSummary;
+  trucks: TruckSummary;
+  nextShipDate: string | null;
+  parts: OutboundPart[];
+  lines: OutboundOrder[];
+}
+
+export interface OutboundBacklog {
+  orders: number;
+  pallets: PalletSummary;
+  trucks: TruckSummary;
+}
+
+export interface OutboundResponse {
+  from: string;
+  to: string;
+  snapshot: OutboundSnapshotInfo | null;
+  days: OutboundDay[];
+  shipTos: OutboundShipTo[];
+  /** Whole snapshot, outside the date range: ship date before the report date, still listed as open. */
+  overdue: OutboundBacklog;
+  /** Whole snapshot: no ship date (blank or a 2099 placeholder). */
+  unscheduled: OutboundBacklog;
 }

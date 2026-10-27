@@ -26,7 +26,7 @@ describe('ratio lookup', () => {
   ]);
 
   it('uses the part\'s own ratio when it has one', () => {
-    expect(lookup.resolve('SSD-1', 'SSD')).toEqual({ basis: 'real', unitsPerPallet: 1200, palletsPerTruck: 26 });
+    expect(lookup.resolve('SSD-1', 'SSD')).toEqual({ basis: 'real', unitsPerPallet: 1200, palletsPerTruck: 26, palletsPerTruckBasis: 'real' });
   });
 
   it('estimates from the commodity median, case-insensitively, keeping a known pallets-per-truck', () => {
@@ -34,6 +34,7 @@ describe('ratio lookup', () => {
       basis: 'estimated',
       unitsPerPallet: 1200,
       palletsPerTruck: 14,
+      palletsPerTruckBasis: 'real',
       estimate: { commodity: 'SSD', parts: 3 },
     });
     expect(lookup.resolve('UNLISTED', 'ssd ').unitsPerPallet).toBe(1200);
@@ -52,7 +53,7 @@ describe('ratio lookup', () => {
 });
 
 describe('pallet math', () => {
-  const real = { basis: 'real' as const, unitsPerPallet: 840, palletsPerTruck: 26 };
+  const real = { basis: 'real' as const, unitsPerPallet: 840, palletsPerTruck: 26, palletsPerTruckBasis: 'real' as const };
 
   it('keeps pallets fractional and counts whole and partial pallets per line', () => {
     expect(toPallets(real, 2000)).toMatchObject({ fullPallets: 2, partial: true });
@@ -70,8 +71,8 @@ describe('pallet math', () => {
   it('sums real, estimated and no-ratio lines separately', () => {
     const sum = emptySummary();
     addLine(sum, toPallets(real, 2000), 2000);
-    addLine(sum, toPallets({ basis: 'estimated', unitsPerPallet: 100, palletsPerTruck: null }, 150), 150);
-    addLine(sum, toPallets({ basis: 'none', unitsPerPallet: null, palletsPerTruck: null }, 40), 40);
+    addLine(sum, toPallets({ basis: 'estimated', unitsPerPallet: 100, palletsPerTruck: 26, palletsPerTruckBasis: 'default' }, 150), 150);
+    addLine(sum, toPallets({ basis: 'none', unitsPerPallet: null, palletsPerTruck: 26, palletsPerTruckBasis: 'default' }, 40), 40);
     addLine(sum, toPallets(real, 0), null);
     expect(sum).toMatchObject({
       lines: 4,

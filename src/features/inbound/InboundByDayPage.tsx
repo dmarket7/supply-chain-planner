@@ -1,92 +1,19 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { addDays, todayIso } from '../../../shared/dates';
 import { estimatedShare, mergeSummaries, type PalletSummary } from '../../../shared/pallets';
-import type { InboundDay, InboundPart, InboundResponse } from '../../../shared/types';
+import type { InboundDay, InboundResponse } from '../../../shared/types';
 import { BasisBadge, Card, DateInput, Empty, ErrorNote, PageHeader, StatTile, StatusBadge, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
 import { formatDate, formatPallets, poLineLabel } from '../../lib/format';
 import { useBranch } from '../../app/branch';
+import { DataQualityNote, MetricToggle, useStoredChoice } from '../../components/pallets';
 import { ShipmentDrawer } from '../shipments/ShipmentDrawer';
 import { BranchSummaryTable } from './BranchSummaryTable';
 import { InboundByPartTable } from './InboundByPartTable';
 import { InboundChart, METRICS, type Metric } from './InboundChart';
 
 const METRIC_LABELS: Record<Metric, string> = { pallets: 'Pallets', units: 'Units', lines: 'Lines' };
-const METRIC_KEY = 'inbound-metric';
-
-/** Remembered per browser; storage can be unavailable (private windows), so it falls back to pallets. */
-function useMetric(): [Metric, (m: Metric) => void] {
-  const [metric, setMetric] = useState<Metric>(() => {
-    try {
-      const saved = localStorage.getItem(METRIC_KEY);
-      return METRICS.includes(saved as Metric) ? (saved as Metric) : 'pallets';
-    } catch {
-      return 'pallets';
-    }
-  });
-  return [
-    metric,
-    (m) => {
-      setMetric(m);
-      try {
-        localStorage.setItem(METRIC_KEY, m);
-      } catch {
-        // not remembered
-      }
-    },
-  ];
-}
-
-function MetricToggle({ value, onChange }: { value: Metric; onChange: (m: Metric) => void }) {
-  return (
-    <div className="block text-sm">
-      <span className="mb-1 block text-slate-500">Show</span>
-      <div role="group" aria-label="Show inbound as" className="inline-flex rounded-md border border-slate-300 p-0.5 dark:border-slate-700">
-        {METRICS.map((m) => (
-          <button
-            key={m}
-            onClick={() => onChange(m)}
-            aria-pressed={value === m}
-            className={`rounded px-3 py-1 text-sm ${value === m ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-          >
-            {METRIC_LABELS[m]}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Calls out how much of the pallet picture is estimated or missing, with a link to fix the ratios. */
-function DataQualityNote({ sum, parts }: { sum: PalletSummary; parts: InboundPart[] }) {
-  const estimatedParts = parts.filter((p) => p.basis === 'estimated').length;
-  const noRatioParts = parts.filter((p) => p.basis === 'none').length;
-  if (!estimatedParts && !noRatioParts) return null;
-  const pct = Math.round(estimatedShare(sum) * 100);
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-      <span>
-        {estimatedParts > 0 && (
-          <>
-            <strong>{pct}%</strong> of pallets in this range are estimated from commodity averages ({estimatedParts} part{estimatedParts === 1 ? '' : 's'}).{' '}
-          </>
-        )}
-        {noRatioParts > 0 && (
-          <>
-            <strong>{noRatioParts}</strong> part{noRatioParts === 1 ? ' has' : 's have'} no ratio and {noRatioParts === 1 ? 'is' : 'are'} left out of pallet totals (
-            {sum.noRatioUnits.toLocaleString()} units).
-          </>
-        )}
-      </span>
-      <Link to="/settings/pallets?filter=needs-data" className="ml-auto whitespace-nowrap font-medium underline">
-        Improve pallet ratios
-      </Link>
-    </div>
-  );
-}
-
 function rangeSum(days: InboundDay[], from: string, to: string): PalletSummary {
   return mergeSummaries(days.filter((d) => d.date >= from && d.date <= to).map((d) => d.pallets));
 }
@@ -96,7 +23,7 @@ export function InboundByDayPage() {
   const [to, setTo] = useState(addDays(todayIso(), 21));
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
-  const [metric, setMetric] = useMetric();
+  const [metric, setMetric] = useStoredChoice<Metric>('inbound-metric', METRICS, 'pallets');
   const { branch } = useBranch();
 
   const { data, error, isLoading } = useQuery({
@@ -129,7 +56,7 @@ export function InboundByDayPage() {
         description="PO lines grouped by expected arrival (carrier ETA when known, otherwise the supplier's ETA). Lines awaiting shipment have no date yet and are listed on the Shipments page."
         actions={
           <>
-            <MetricToggle value={metric} onChange={setMetric} />
+            <MetricToggle options={METRICS} labels={METRIC_LABELS} value={metric} onChange={setMetric} />
             <DateInput label="From" value={from} onChange={setFrom} />
             <DateInput label="To" value={to} onChange={setTo} />
           </>
