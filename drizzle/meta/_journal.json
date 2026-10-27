@@ -43,6 +43,13 @@
       "when": 1792611197954,
       "tag": "0005_trackingmore_registrations",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793069740368,
+      "tag": "0006_pallet_ratios",
+      "breakpoints": true
     }
   ]
 }

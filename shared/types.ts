@@ -1,3 +1,4 @@
+import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues } from './pallets';
 import type { ProgressCounts } from './progress';
 import { z } from 'zod';
 
@@ -369,12 +370,103 @@ export interface ShipmentDetail extends Shipment {
   promisedDateHistory: { previousDate: string; newDate: string; changedAt: string }[];
 }
 
+export interface InboundShipment extends Shipment {
+  pallets: LinePallets;
+}
+
 export interface InboundDay {
   date: string;
   total: number;
   byCarrier: Record<string, number>;
   byStatus: Partial<Record<ShipmentStatus, number>>;
-  shipments: Shipment[];
+  pallets: PalletSummary;
+  shipments: InboundShipment[];
+}
+
+/** Inbound lines in a date range, grouped by part. */
+export interface InboundPart {
+  partNumber: string | null;
+  description: string | null;
+  commodity: string | null;
+  basis: PalletBasis;
+  unitsPerPallet: number | null;
+  estimate?: { commodity: string; parts: number };
+  pallets: PalletSummary;
+}
+
+export interface InboundResponse {
+  from: string;
+  to: string;
+  days: InboundDay[];
+  parts: InboundPart[];
+}
+
+/** One part on the Pallet ratios settings page: a stored ratio and/or a part seen in shipments. */
+export interface PalletRatioRow {
+  partNumber: string;
+  itemName: string | null;
+  commodity: string | null;
+  unitsPerPallet: number | null;
+  palletsPerTruck: number | null;
+  canDoubleStack: boolean;
+  note: string | null;
+  /** null = no stored ratio (the part only appears in shipments). */
+  source: RatioSource | null;
+  fileValues: RatioValues | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+  basis: PalletBasis;
+  /** The ratio used for calculations: the part's own, or its commodity estimate. */
+  effectiveUnitsPerPallet: number | null;
+  estimate?: { commodity: string; parts: number };
+  /** A manual edit differs from what the latest upload said. */
+  conflict: boolean;
+  /** Open inbound lines (not yet arrived) and their units. */
+  openLines: number;
+  openUnits: number;
+}
+
+export interface PalletRatiosResponse {
+  rows: PalletRatioRow[];
+  estimates: CommodityEstimate[];
+}
+
+const ratioNumber = z.number().positive().nullable();
+
+export const palletRatioEditSchema = z.object({
+  unitsPerPallet: ratioNumber,
+  palletsPerTruck: ratioNumber,
+  canDoubleStack: z.boolean().optional(),
+  note: z.string().nullish(),
+});
+export type PalletRatioEdit = z.infer<typeof palletRatioEditSchema>;
+
+export const palletRatioFileRowSchema = z.object({
+  partNumber: z.string().trim().min(1),
+  unitsPerPallet: ratioNumber,
+  palletsPerTruck: ratioNumber,
+  canDoubleStack: z.boolean(),
+  note: z.string().nullable(),
+  itemName: z.string().nullable(),
+  productGroup: z.string().nullable(),
+});
+export type PalletRatioFileRow = z.infer<typeof palletRatioFileRowSchema>;
+
+export const palletRatioImportSchema = z.object({
+  rows: z.array(palletRatioFileRowSchema).min(1).max(5000),
+  dryRun: z.boolean().optional(),
+});
+
+export interface PalletRatioImportResult {
+  dryRun: boolean;
+  total: number;
+  added: number;
+  changed: number;
+  unchanged: number;
+  /** Parts with a manual edit that the file disagrees with; the manual value is kept. */
+  conflicts: { partNumber: string; manual: RatioValues; file: RatioValues }[];
+  /** Rows in the file with no units per pallet. */
+  missing: number;
 }
 
 export interface ArrivalLogEntry extends Shipment {

@@ -15,6 +15,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import type { RatioSource, RatioValues } from '../../shared/pallets';
 import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping, type LineChangeKind, type RegistrationState } from '../../shared/types';
 
 export const shipmentStatus = pgEnum('shipment_status', SHIPMENT_STATUSES);
@@ -253,3 +254,22 @@ export const promisedDateHistory = pgTable('promised_date_history', {
   importId: integer('import_id').references(() => imports.id),
   changedAt: timestamp('changed_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [index('promised_date_history_shipment_idx').on(t.shipmentId)]);
+
+/**
+ * Units per pallet and pallets per truck for one part (Wintec PN / CPN), from the uploaded
+ * Pallet Ratios file or entered in Settings. Parts without a row get a commodity estimate.
+ */
+export const palletRatios = pgTable('pallet_ratios', {
+  partNumber: text('part_number').primaryKey(),
+  unitsPerPallet: numeric('units_per_pallet', { mode: 'number' }),
+  palletsPerTruck: numeric('pallets_per_truck', { mode: 'number' }),
+  canDoubleStack: boolean('can_double_stack').notNull().default(false),
+  itemName: text('item_name'),
+  productGroup: text('product_group'),
+  note: text('note'),
+  source: text('source').$type<RatioSource>().notNull(),
+  /** What the latest upload said, kept under a manual edit so a later upload can flag a disagreement. */
+  fileValues: jsonb('file_values').$type<RatioValues>(),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});

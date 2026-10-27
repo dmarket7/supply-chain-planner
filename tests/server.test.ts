@@ -4,7 +4,8 @@ import type { Shipment } from '../shared/types';
 import { planImport, planRow, poLineKey, type ExistingShipment, type IncomingRow } from '../server/importPlan';
 import { bucketsOf } from '../shared/progress';
 import { describeAuthUrlProblem, normalizeAuthUrl } from '../server/auth';
-import { groupInboundByDay, supplierScorecard, toArrivalEntry } from '../server/reports';
+import { groupInboundByDay, supplierScorecard, toArrivalEntry, withPallets } from '../server/reports';
+import { RatioLookup } from '../shared/pallets';
 
 const incoming = (over: Partial<IncomingRow>): IncomingRow => ({
   dedupeKey: 'po:P1:1-1:A1',
@@ -244,12 +245,12 @@ describe('progress buckets and labels', () => {
 
 describe('reports', () => {
   it('groups inbound by expected day and leaves out lines with no date', () => {
-    const days = groupInboundByDay([
+    const days = groupInboundByDay(withPallets([
       shipment({ id: 1, promisedArrivalDate: '2026-10-21' }),
       shipment({ id: 2, promisedArrivalDate: '2026-10-25', estimatedArrivalDate: '2026-10-21', carrier: 'FedEx', status: 'in_transit' }),
       shipment({ id: 3, promisedArrivalDate: '2026-10-20', carrier: null }),
       shipment({ id: 4, promisedArrivalDate: null, status: 'awaiting_shipment' }),
-    ]);
+    ], new RatioLookup([])));
     expect(days.map((d) => [d.date, d.total])).toEqual([['2026-10-20', 1], ['2026-10-21', 2]]);
     expect(days[1].byCarrier).toEqual({ UPS: 1, FedEx: 1 });
     expect(days[0].byCarrier).toEqual({ Unknown: 1 });
