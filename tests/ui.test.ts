@@ -275,3 +275,50 @@ describe('outbound page', () => {
     expect(html).toContain('No outbound orders yet');
   });
 });
+
+describe('dashboard and inventory pages', () => {
+  async function fixture() {
+    const { addDays, todayIso } = await import('../shared/dates');
+    const { RatioLookup } = await import('../shared/pallets');
+    const { checkSupply } = await import('../shared/supply');
+    const { dashboard, supplyParts } = await import('../server/dashboard');
+    const today = todayIso();
+    const ratios = new RatioLookup([{ partNumber: 'A', unitsPerPallet: 100, palletsPerTruck: 26, productGroup: 'SSD', source: 'file' }]);
+    const base = { emsPo: null, warehouse: 'JIT-MSUS-META', manufacturer: null, packagingType: null, totalPrice: null, sourceRows: 1, shipDateSource: 'confirmed' as const, scheduledShipDate: null, confirmedShipDate: null, dockDate: null, poReceiptDate: null, itemName: null, cpn: 'A', mpn: 'MPN-A', businessGroup: 'SSD' };
+    const orders = [
+      { ...base, id: 1, soNumber: 'SO-READY', status: 'Reserved Physical', shipTo: 'CELESTICA LLC-RICHARDSON', quantity: 200, shipDate: addDays(today, 1) },
+      { ...base, id: 2, soNumber: 'SO-SHORT', status: 'On order', shipTo: 'CELESTICA LLC-RICHARDSON', quantity: 300, shipDate: addDays(today, 2) },
+    ];
+    const positions = [{ partNumber: 'A', branch: 'JIT-MSUS-META', vendorPn: 'MPN-A', description: 'SSD A', commodity: 'SSD', onhand: 200, reserved: 200, available: 0, onReceipt: 0 }];
+    const supply = {
+      outbound: { reportDate: today },
+      inventory: { id: 1, fileName: 'r.xlsx', reportDate: today, rowCount: 1, positionCount: 1 },
+      orders,
+      inbound: [],
+      positions,
+      check: checkSupply(positions, orders, []),
+    } as unknown as Parameters<typeof dashboard>[0];
+    return { today, supply, dash: dashboard(supply, ratios, today, today), parts: supplyParts(supply) };
+  }
+
+  it('shows the weekly flow, can-ship share and the short part', async () => {
+    const { DashboardPage } = await import('../src/features/dashboard/DashboardPage');
+    const { dash } = await fixture();
+    expect(dash.exceptions.shortParts.count).toBe(1);
+    const html = render(h(DashboardPage), [[['dashboard', ''], dash]]);
+    expect(html).toContain('Where we&#x27;re stuck');
+    expect(html).toContain('Can ship, next 7 days');
+    expect(html).toMatch(/>40%</); // 200 of 500 units
+    expect(html).toContain('Outbound at risk');
+    expect(html).not.toContain('SO-SHORT'); // issue rows start closed
+  });
+
+  it('lists parts with their supply status', async () => {
+    const { InventoryPage } = await import('../src/features/inventory/InventoryPage');
+    const { parts, today } = await fixture();
+    const html = render(h(InventoryPage), [[['supply', ''], { inventory: { id: 1, fileName: 'r.xlsx', reportDate: today, rowCount: 1, positionCount: 1 }, outboundReportDate: today, parts }]]);
+    expect(html).toContain('>A<');
+    expect(html).toContain('>Short<');
+    expect(html).toContain('300');
+  });
+});

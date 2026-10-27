@@ -4,7 +4,9 @@ import { AuthPage } from './AuthPage';
 import { Layout } from './Layout';
 import { useSession } from './session';
 
-// Route-level code splitting keeps SheetJS (import) and Recharts (inbound) out of the initial bundle.
+// Route-level code splitting keeps SheetJS (import) and Recharts (charts) out of the initial bundle.
+const DashboardPage = lazy(() => import('../features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const InventoryPage = lazy(() => import('../features/inventory/InventoryPage').then((m) => ({ default: m.InventoryPage })));
 const InboundByDayPage = lazy(() => import('../features/inbound/InboundByDayPage').then((m) => ({ default: m.InboundByDayPage })));
 const OutboundPage = lazy(() => import('../features/outbound/OutboundPage').then((m) => ({ default: m.OutboundPage })));
 const ShipmentsPage = lazy(() => import('../features/shipments/ShipmentsPage').then((m) => ({ default: m.ShipmentsPage })));
@@ -28,8 +30,10 @@ export function App() {
     <Routes>
       <Route path="/auth" element={<AuthPage />} />
       <Route element={<Layout />}>
-        <Route index element={<InboundByDayPage />} />
+        <Route index element={<DashboardPage />} />
+        <Route path="inbound" element={<InboundByDayPage />} />
         <Route path="outbound" element={<OutboundPage />} />
+        <Route path="inventory" element={<InventoryPage />} />
         <Route path="shipments" element={<ShipmentsPage />} />
         <Route path="arrivals" element={<ArrivalLogPage />} />
         <Route path="tracking" element={<TrackingSetupPage />} />
