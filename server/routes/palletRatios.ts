@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { RatioLookup, type RatioValues } from '../../shared/pallets';
 import {
   palletRatioEditSchema,
@@ -10,8 +10,9 @@ import {
   type PalletRatiosResponse,
 } from '../../shared/types';
 import { getDb } from '../db/client';
-import { palletRatios, shipments } from '../db/schema';
+import { outboundOrders, palletRatios, shipments } from '../db/schema';
 import type { AppEnv } from '../env';
+import { currentSnapshot } from '../outbound';
 import { chunk } from './common';
 
 export const palletRatiosRoutes = new Hono<AppEnv>();
@@ -25,7 +26,8 @@ const valuesOf = (r: RatioValues): RatioValues => ({ unitsPerPallet: r.unitsPerP
 palletRatiosRoutes.get('/', async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const open = isNull(shipments.actualArrivalDate);
-  const [stored, parts] = await Promise.all([
+  const snap = await currentSnapshot(db);
+  const [stored, parts, outbound] = await Promise.all([
     db.select().from(palletRatios),
     db
       .select({
@@ -38,16 +40,30 @@ palletRatiosRoutes.get('/', async (c) => {
       .from(shipments)
       .where(isNotNull(shipments.partNumber))
       .groupBy(shipments.partNumber),
+    snap
+      ? db
+          .select({
+            partNumber: sql<string>`${outboundOrders.cpn}`,
+            commodity: sql<string | null>`max(${outboundOrders.businessGroup})`,
+            orders: sql<number>`count(*)`.mapWith(Number),
+            units: sql<number>`coalesce(sum(${outboundOrders.quantity}), 0)`.mapWith(Number),
+          })
+          .from(outboundOrders)
+          .where(and(eq(outboundOrders.snapshotId, snap.id), isNotNull(outboundOrders.cpn)))
+          .groupBy(outboundOrders.cpn)
+      : Promise.resolve([]),
   ]);
   const lookup = new RatioLookup(stored);
   const seen = new Map(parts.map((p) => [p.partNumber, p]));
-  const keys = [...new Set([...stored.map((r) => r.partNumber), ...seen.keys()])].sort();
+  const out = new Map(outbound.map((o) => [o.partNumber, o]));
+  const keys = [...new Set([...stored.map((r) => r.partNumber), ...seen.keys(), ...out.keys()])].sort();
   const byPart = new Map(stored.map((r) => [r.partNumber, r]));
 
   const rows: PalletRatioRow[] = keys.map((partNumber) => {
     const r = byPart.get(partNumber);
     const p = seen.get(partNumber);
-    const commodity = p?.commodity ?? r?.productGroup ?? null;
+    const o = out.get(partNumber);
+    const commodity = p?.commodity ?? o?.commodity ?? r?.productGroup ?? null;
     const resolved = lookup.resolve(partNumber, commodity);
     return {
       partNumber,
@@ -67,6 +83,8 @@ palletRatiosRoutes.get('/', async (c) => {
       conflict: !!r && r.source === 'manual' && !!r.fileValues && !sameValues(r, r.fileValues),
       openLines: p?.openLines ?? 0,
       openUnits: p?.openUnits ?? 0,
+      outboundOrders: o?.orders ?? 0,
+      outboundUnits: o?.units ?? 0,
     };
   });
   const body: PalletRatiosResponse = { rows, estimates: lookup.estimates };

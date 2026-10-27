@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
-import { and, asc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, gte, isNull, lte, sql } from 'drizzle-orm';
 import { addDays, todayIso } from '../../shared/dates';
-import type { ArrivalsResponse, InboundResponse, Shipment } from '../../shared/types';
+import type { ArrivalsResponse, InboundResponse, OutboundOrderInput, OutboundResponse, Shipment } from '../../shared/types';
 import { getDb } from '../db/client';
-import { promisedDateHistory, shipments, suppliers } from '../db/schema';
+import { outboundOrders, palletRatios, promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
+import { currentSnapshot, snapshotInfo } from '../outbound';
 import { loadRatioLookup } from '../palletRatios';
-import { groupInboundByDay, groupInboundByPart, supplierScorecard, toArrivalEntry, withPallets } from '../reports';
-import { branchFilter, shipmentColumns } from './common';
+import { groupInboundByDay, groupInboundByPart, outboundReport, supplierScorecard, toArrivalEntry, withPallets } from '../reports';
+import { branchFilter, NO_BRANCH, shipmentColumns } from './common';
 
 export const reportsRoutes = new Hono<AppEnv>();
 
@@ -61,5 +62,40 @@ reportsRoutes.get('/arrivals', async (c) => {
     .filter((r): r is Shipment & { originalPromisedDate: string } => !!r.originalPromisedDate)
     .map(toArrivalEntry);
   const body: ArrivalsResponse = { entries, scorecard: supplierScorecard(entries, includeAssumed) };
+  return c.json(body);
+});
+
+/** Open sales orders from the current ODM Open Order snapshot, in pallets and trucks. */
+reportsRoutes.get('/outbound', async (c) => {
+  const today = todayIso();
+  const from = c.req.query('from') ?? addDays(today, -7);
+  const to = c.req.query('to') ?? addDays(today, 28);
+  const branch = c.req.query('branch');
+  const db = getDb(c.env.DATABASE_URL);
+  const snap = await currentSnapshot(db);
+  if (!snap) {
+    const body: OutboundResponse = { from, to, snapshot: null, ...outboundReport([], from, to, today) };
+    return c.json(body);
+  }
+  const { snapshotId: _s, ...orderColumns } = getTableColumns(outboundOrders);
+  const [rows, ratios, info] = await Promise.all([
+    db
+      .select({ ...orderColumns, itemName: palletRatios.itemName })
+      .from(outboundOrders)
+      .leftJoin(palletRatios, eq(palletRatios.partNumber, outboundOrders.cpn))
+      .where(
+        and(
+          eq(outboundOrders.snapshotId, snap.id),
+          !branch ? undefined : branch === NO_BRANCH ? isNull(outboundOrders.warehouse) : eq(outboundOrders.warehouse, branch),
+        ),
+      ),
+    loadRatioLookup(db),
+    snapshotInfo(db, snap),
+  ]);
+  const orders = rows.map((o) => ({
+    ...(o as OutboundOrderInput & { id: number; itemName: string | null }),
+    pallets: ratios.line(o.cpn, o.businessGroup, o.quantity),
+  }));
+  const body: OutboundResponse = { from, to, snapshot: info, ...outboundReport(orders, from, to, today) };
   return c.json(body);
 });

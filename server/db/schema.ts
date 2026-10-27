@@ -273,3 +273,49 @@ export const palletRatios = pgTable('pallet_ratios', {
   updatedBy: text('updated_by').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+/** One upload of the report's ODM Open Order tab. The latest completed one (by report date) is current. */
+export const outboundSnapshots = pgTable('outbound_snapshots', {
+  id: serial('id').primaryKey(),
+  fileName: text('file_name').notNull(),
+  reportDate: date('report_date').notNull(),
+  uploadedBy: text('uploaded_by').notNull(),
+  uploadedAt: timestamp('uploaded_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  rowCount: integer('row_count').notNull().default(0),
+  orderCount: integer('order_count').notNull().default(0),
+  skippedQuotations: integer('skipped_quotations').notNull().default(0),
+}, (t) => [index('outbound_snapshots_report_idx').on(t.reportDate)]);
+
+/**
+ * One open sales order line from a snapshot. The report splits an order into reservation pieces
+ * (often identical rows); these are summed into one row per SO, status, part, ship-to and ship date.
+ */
+export const outboundOrders = pgTable('outbound_orders', {
+  id: serial('id').primaryKey(),
+  snapshotId: integer('snapshot_id').notNull().references(() => outboundSnapshots.id, { onDelete: 'cascade' }),
+  soNumber: text('so_number').notNull(),
+  emsPo: text('ems_po'),
+  /** Reservation status: Reserved Physical / Reserved ordered / On order. */
+  status: text('status'),
+  warehouse: text('warehouse'),
+  shipTo: text('ship_to'),
+  cpn: text('cpn'),
+  mpn: text('mpn'),
+  manufacturer: text('manufacturer'),
+  businessGroup: text('business_group'),
+  packagingType: text('packaging_type'),
+  quantity: numeric('quantity', { mode: 'number' }).notNull(),
+  totalPrice: numeric('total_price', { mode: 'number' }),
+  sourceRows: integer('source_rows').notNull().default(1),
+  /** Wintec confirmed ship date, else the system schedule date; null = unscheduled (blank or a 2099 placeholder). */
+  shipDate: date('ship_date'),
+  shipDateSource: text('ship_date_source').$type<'confirmed' | 'scheduled'>(),
+  scheduledShipDate: date('scheduled_ship_date'),
+  confirmedShipDate: date('confirmed_ship_date'),
+  dockDate: date('dock_date'),
+  poReceiptDate: date('po_receipt_date'),
+}, (t) => [
+  index('outbound_orders_ship_date_idx').on(t.snapshotId, t.shipDate),
+  index('outbound_orders_cpn_idx').on(t.snapshotId, t.cpn),
+]);

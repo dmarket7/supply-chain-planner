@@ -11,6 +11,9 @@
 export const PALLET_BASES = ['real', 'estimated', 'none'] as const;
 export type PalletBasis = (typeof PALLET_BASES)[number];
 
+/** Most common pallets per truck in the Pallet Ratios file; used when neither the part nor its commodity has one. */
+export const DEFAULT_PALLETS_PER_TRUCK = 26;
+
 export const RATIO_SOURCES = ['file', 'manual'] as const;
 export type RatioSource = (typeof RATIO_SOURCES)[number];
 
@@ -43,6 +46,8 @@ export interface ResolvedRatio {
   basis: PalletBasis;
   unitsPerPallet: number | null;
   palletsPerTruck: number | null;
+  /** The part's own value, its commodity's median, or DEFAULT_PALLETS_PER_TRUCK. */
+  palletsPerTruckBasis: 'real' | 'estimated' | 'default';
   /** For estimates: the commodity and how many parts its median is based on. */
   estimate?: { commodity: string; parts: number };
 }
@@ -65,6 +70,20 @@ export interface PalletSummary {
   /** Lines with a remainder, i.e. a pallet that isn't full (and may be combined with others). */
   partialPallets: number;
   estimatedLines: number;
+  noRatioLines: number;
+  noRatioUnits: number;
+}
+
+/**
+ * Trucks for lines grouped by destination and day: lines in one group share trucks, so each group's
+ * truckloads (pallets ÷ pallets per truck, summed) are rounded up once.
+ */
+export interface TruckSummary {
+  truckloads: number;
+  /** Truckloads where the pallet ratio or the pallets per truck is an estimate or the default. */
+  estimatedTruckloads: number;
+  trucksNeeded: number;
+  /** Lines with no pallet ratio can't be put on trucks. */
   noRatioLines: number;
   noRatioUnits: number;
 }
@@ -124,19 +143,17 @@ export class RatioLookup {
   /** The report's commodity is used for the estimate, falling back to the file's product group. */
   resolve(partNumber: string | null | undefined, commodity: string | null | undefined): ResolvedRatio {
     const own = partNumber ? this.byPart.get(partNumber) : undefined;
-    if (own?.unitsPerPallet) {
-      return { basis: 'real', unitsPerPallet: own.unitsPerPallet, palletsPerTruck: own.palletsPerTruck };
-    }
     const key = commodityKey(commodity) ?? commodityKey(own?.productGroup);
     const est = key ? this.byCommodity.get(key) : undefined;
-    if (!est) return { basis: 'none', unitsPerPallet: null, palletsPerTruck: own?.palletsPerTruck ?? null };
-    return {
-      basis: 'estimated',
-      unitsPerPallet: est.unitsPerPallet,
-      // A part can have a known pallets-per-truck without a units-per-pallet.
-      palletsPerTruck: own?.palletsPerTruck ?? est.palletsPerTruck,
-      estimate: { commodity: est.commodity, parts: est.parts },
-    };
+    // A part can have a known pallets per truck without a units per pallet, and the other way round.
+    const truck = own?.palletsPerTruck
+      ? { palletsPerTruck: own.palletsPerTruck, palletsPerTruckBasis: 'real' as const }
+      : est?.palletsPerTruck
+        ? { palletsPerTruck: est.palletsPerTruck, palletsPerTruckBasis: 'estimated' as const }
+        : { palletsPerTruck: DEFAULT_PALLETS_PER_TRUCK, palletsPerTruckBasis: 'default' as const };
+    if (own?.unitsPerPallet) return { basis: 'real', unitsPerPallet: own.unitsPerPallet, ...truck };
+    if (!est) return { basis: 'none', unitsPerPallet: null, ...truck };
+    return { basis: 'estimated', unitsPerPallet: est.unitsPerPallet, ...truck, estimate: { commodity: est.commodity, parts: est.parts } };
   }
 
   line(partNumber: string | null | undefined, commodity: string | null | undefined, quantity: number | null | undefined): LinePallets {
@@ -191,6 +208,39 @@ export function addLine(sum: PalletSummary, p: LinePallets, quantity: number | n
 export function mergeSummaries(items: PalletSummary[]): PalletSummary {
   const out = emptySummary();
   for (const s of items) for (const k of Object.keys(out) as (keyof PalletSummary)[]) out[k] += s[k];
+  return out;
+}
+
+export function emptyTrucks(): TruckSummary {
+  return { truckloads: 0, estimatedTruckloads: 0, trucksNeeded: 0, noRatioLines: 0, noRatioUnits: 0 };
+}
+
+/** One line's share of a truck, or null when it has no pallet ratio. */
+export function truckShare(p: LinePallets): number | null {
+  return p.palletEq === null || !p.palletsPerTruck ? null : p.palletEq / p.palletsPerTruck;
+}
+
+/** Adds one destination-day group of lines, which share trucks (mutates `sum`). */
+export function addTruckGroup(sum: TruckSummary, lines: { pallets: LinePallets; quantity: number | null | undefined }[]): TruckSummary {
+  let group = 0;
+  for (const { pallets, quantity } of lines) {
+    const share = truckShare(pallets);
+    if (share === null) {
+      sum.noRatioLines++;
+      sum.noRatioUnits += quantity ?? 0;
+      continue;
+    }
+    group += share;
+    if (pallets.basis !== 'real' || pallets.palletsPerTruckBasis !== 'real') sum.estimatedTruckloads += share;
+  }
+  sum.truckloads += group;
+  if (group > EPS) sum.trucksNeeded += Math.ceil(group - EPS);
+  return sum;
+}
+
+export function mergeTrucks(items: TruckSummary[]): TruckSummary {
+  const out = emptyTrucks();
+  for (const s of items) for (const k of Object.keys(out) as (keyof TruckSummary)[]) out[k] += s[k];
   return out;
 }
 

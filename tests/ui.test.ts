@@ -211,6 +211,8 @@ describe('pallet views', () => {
       conflict: false,
       openLines: 1,
       openUnits: 100,
+      outboundOrders: 0,
+      outboundUnits: 0,
       ...over,
     });
     const data: PalletRatiosResponse = {

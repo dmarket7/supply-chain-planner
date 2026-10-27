@@ -1,6 +1,18 @@
 import { arrivalVariance } from '../shared/dates';
-import { addLine, emptySummary, type RatioLookup } from '../shared/pallets';
-import type { ArrivalLogEntry, InboundDay, InboundPart, InboundShipment, Shipment, SupplierScore } from '../shared/types';
+import { addLine, addTruckGroup, emptySummary, emptyTrucks, type RatioLookup, type TruckSummary } from '../shared/pallets';
+import type {
+  ArrivalLogEntry,
+  InboundDay,
+  InboundPart,
+  InboundShipment,
+  OutboundBacklog,
+  OutboundDay,
+  OutboundOrder,
+  OutboundPart,
+  OutboundShipTo,
+  Shipment,
+  SupplierScore,
+} from '../shared/types';
 
 export function expectedArrival(s: Pick<Shipment, 'estimatedArrivalDate' | 'promisedArrivalDate'>) {
   return s.estimatedArrivalDate ?? s.promisedArrivalDate;
@@ -87,4 +99,90 @@ export function supplierScorecard(entries: ArrivalLogEntry[], includeAssumed = f
       };
     })
     .sort((a, b) => a.onTimePct - b.onTimePct || b.arrivals - a.arrivals);
+}
+
+function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const item of items) {
+    const k = key(item);
+    const list = out.get(k);
+    if (list) list.push(item);
+    else out.set(k, [item]);
+  }
+  return out;
+}
+
+const NO_SHIP_TO = '(no ship-to)';
+const shipToOf = (o: OutboundOrder) => o.shipTo ?? NO_SHIP_TO;
+
+/** Trucks for orders that share trucks per ship-to and day. */
+function trucksFor(orders: OutboundOrder[]): TruckSummary {
+  const sum = emptyTrucks();
+  for (const group of groupBy(orders, (o) => `${shipToOf(o)}\u0000${o.shipDate ?? ''}`).values()) addTruckGroup(sum, group);
+  return sum;
+}
+
+function backlog(orders: OutboundOrder[]): OutboundBacklog {
+  const pallets = emptySummary();
+  for (const o of orders) addLine(pallets, o.pallets, o.quantity);
+  return { orders: orders.length, pallets, trucks: trucksFor(orders) };
+}
+
+const earliest = (a: string | null, b: string | null) => (!a ? b : !b ? a : a < b ? a : b);
+
+function partsOf(orders: OutboundOrder[]): OutboundPart[] {
+  return [...groupBy(orders, (o) => `${o.mpn ?? ''}\u0000${o.cpn ?? ''}`).values()]
+    .map((list) => {
+      const o = list[0];
+      const part: OutboundPart = {
+        mpn: o.mpn,
+        cpn: o.cpn,
+        itemName: o.itemName,
+        businessGroup: o.businessGroup,
+        basis: o.pallets.basis,
+        unitsPerPallet: o.pallets.unitsPerPallet,
+        estimate: o.pallets.estimate,
+        orders: list.length,
+        pallets: emptySummary(),
+        unitsByStatus: {},
+        nextShipDate: null,
+      };
+      for (const x of list) {
+        addLine(part.pallets, x.pallets, x.quantity);
+        const status = x.status ?? 'Unknown';
+        part.unitsByStatus[status] = (part.unitsByStatus[status] ?? 0) + x.quantity;
+        part.nextShipDate = earliest(part.nextShipDate, x.shipDate);
+      }
+      return part;
+    })
+    .sort((a, b) => Number(a.basis === 'none') - Number(b.basis === 'none') || b.pallets.palletEq - a.pallets.palletEq || b.pallets.units - a.pallets.units);
+}
+
+/**
+ * Open sales orders by ship date and by ship-to. Orders to the same ship-to on the same day share
+ * trucks. Overdue (before `today`) and unscheduled orders are summarised over the whole snapshot.
+ */
+export function outboundReport(orders: OutboundOrder[], from: string, to: string, today: string) {
+  const inRange = orders.filter((o) => o.shipDate && o.shipDate >= from && o.shipDate <= to);
+
+  const days: OutboundDay[] = [...groupBy(inRange, (o) => o.shipDate!)]
+    .map(([date, list]) => ({ date, ...backlog(list) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const shipTos: OutboundShipTo[] = [...groupBy(inRange, shipToOf)]
+    .map(([shipTo, list]) => ({
+      shipTo,
+      ...backlog(list),
+      nextShipDate: list.reduce<string | null>((d, o) => earliest(d, o.shipDate), null),
+      parts: partsOf(list),
+      lines: [...list].sort((a, b) => a.shipDate!.localeCompare(b.shipDate!) || a.soNumber.localeCompare(b.soNumber)),
+    }))
+    .sort((a, b) => b.pallets.palletEq - a.pallets.palletEq || b.pallets.units - a.pallets.units);
+
+  return {
+    days,
+    shipTos,
+    overdue: backlog(orders.filter((o) => o.shipDate && o.shipDate < today)),
+    unscheduled: backlog(orders.filter((o) => !o.shipDate)),
+  };
 }
