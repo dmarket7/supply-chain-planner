@@ -3,7 +3,7 @@ import { createElement as h } from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { CoverageRow, LineTracking, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
+import type { CoverageRow, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
 import { BranchProvider } from '../src/app/branch';
 import { TrackingPanel } from '../src/features/shipments/TrackingPanel';
 import { changeNotice, TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
@@ -234,5 +234,43 @@ describe('pallet views', () => {
     expect(html).not.toContain('>A<'); // real ratio
     expect(html).not.toContain('>D<'); // no open inbound
     expect(html).toMatch(/No real ratios yet, so no estimate for: (<!-- -->)?HDD/);
+  });
+});
+
+describe('outbound page', () => {
+  it('shows pallets and trucks per ship-to, with what changed since the last report', async () => {
+    const { addDays, todayIso } = await import('../shared/dates');
+    const { RatioLookup } = await import('../shared/pallets');
+    const { outboundReport } = await import('../server/reports');
+    const { OutboundPage } = await import('../src/features/outbound/OutboundPage');
+    const today = todayIso();
+    const lookup = new RatioLookup([{ partNumber: 'A', unitsPerPallet: 100, palletsPerTruck: 26, productGroup: 'SSD', source: 'file' }]);
+    const base = { emsPo: null, status: 'Reserved Physical', warehouse: null, manufacturer: null, packagingType: null, totalPrice: null, sourceRows: 1, shipDateSource: 'confirmed' as const, scheduledShipDate: null, confirmedShipDate: null, dockDate: null, poReceiptDate: null, itemName: null };
+    const orders = [
+      { ...base, id: 1, soNumber: '1', shipTo: 'CELESTICA LLC-RICHARDSON', cpn: 'A', mpn: 'MPN-A', businessGroup: 'SSD', quantity: 1300, shipDate: addDays(today, 1) },
+      { ...base, id: 2, soNumber: '2', shipTo: 'CELESTICA LLC-RICHARDSON', cpn: 'B', mpn: 'MPN-B', businessGroup: 'SSD', quantity: 1300, shipDate: addDays(today, 1) },
+    ].map((o) => ({ ...o, pallets: lookup.line(o.cpn, o.businessGroup, o.quantity) }));
+    const data: OutboundResponse = {
+      from: '',
+      to: '',
+      snapshot: { id: 1, fileName: 'r.xlsx', reportDate: '2026-10-18', rowCount: 3, orderCount: 2, skippedQuotations: 1, changes: { previousReportDate: '2026-10-10', noLongerListed: 928, added: 350, quantityChanged: 26 } },
+      ...outboundReport(orders, addDays(today, -7), addDays(today, 28), today),
+    };
+    const html = render(h(OutboundPage), [[['outbound', addDays(today, -7), addDays(today, 28), ''], data]]);
+    expect(html).toContain('CELESTICA LLC-RICHARDSON');
+    expect(html).toMatch(/928 SOs(<!-- -->)? no longer listed/);
+    expect(html).toContain('Trucks next 7 days');
+    expect(html).toMatch(/26\.0<\/div>/); // 13 real + 13 estimated pallets
+    expect(html).toContain('/settings/pallets?filter=needs-data');
+  });
+
+  it('explains how to get outbound data before the first import', async () => {
+    const { addDays, todayIso } = await import('../shared/dates');
+    const { outboundReport } = await import('../server/reports');
+    const { OutboundPage } = await import('../src/features/outbound/OutboundPage');
+    const today = todayIso();
+    const data: OutboundResponse = { from: '', to: '', snapshot: null, ...outboundReport([], today, today, today) };
+    const html = render(h(OutboundPage), [[['outbound', addDays(today, -7), addDays(today, 28), ''], data]]);
+    expect(html).toContain('No outbound orders yet');
   });
 });

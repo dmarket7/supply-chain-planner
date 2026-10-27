@@ -608,7 +608,7 @@ export interface OutboundResponse {
   snapshot: OutboundSnapshotInfo | null;
   days: OutboundDay[];
   shipTos: OutboundShipTo[];
-  /** Whole snapshot, outside the date range: ship date before today. */
+  /** Whole snapshot, outside the date range: ship date before the report date, still listed as open. */
   overdue: OutboundBacklog;
   /** Whole snapshot: no ship date (blank or a 2099 placeholder). */
   unscheduled: OutboundBacklog;

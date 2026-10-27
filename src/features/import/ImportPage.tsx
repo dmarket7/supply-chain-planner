@@ -18,6 +18,8 @@ import { api } from '../../lib/api';
 import { formatDate, poLineLabel } from '../../lib/format';
 import { FIELD_LABELS, PRIMARY_FIELDS, REQUIRED_FIELDS, guessMapping } from './guessMapping';
 import { normalizeRow, reportDateFromFileName, type NormalizedRow } from './normalize';
+import { OutboundImportCard } from './OutboundImportCard';
+import { findOdmSheet, parseOdmOrders, type ParsedOdmOrders } from './parseOdmOrders';
 import { headerSignature, parseSheet, readWorkbook, type ParsedSheet } from './parseWorkbook';
 
 /** The tab that holds inbound PO lines in the Meerkat report; other reports fall back to the first sheet. */
@@ -56,6 +58,7 @@ export function ImportPage() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Bucket | 'all' | 'warnings'>('all');
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [odm, setOdm] = useState<{ parsed: ParsedOdmOrders | null; error: string | null }>({ parsed: null, error: null });
 
   const savedMappings = useQuery({ queryKey: ['mappings'], queryFn: () => api<SavedMapping[]>('/mappings') });
 
@@ -74,6 +77,7 @@ export function ImportPage() {
     importMutation.reset();
     setReading(true);
     setSheet(null);
+    setOdm({ parsed: null, error: null });
     try {
       const data = await file.arrayBuffer();
       await new Promise((r) => setTimeout(r, 0)); // let "Reading…" paint before the blocking parse
@@ -82,6 +86,14 @@ export function ImportPage() {
       setReportDate(reportDateFromFileName(file.name) ?? todayIso());
       setWorkbook(wb);
       selectSheet(wb, wb.SheetNames.find((n) => PREFERRED_SHEET.test(n)) ?? wb.SheetNames[0]);
+      const odmSheet = findOdmSheet(wb);
+      if (odmSheet) {
+        try {
+          setOdm({ parsed: parseOdmOrders(wb, odmSheet), error: null });
+        } catch (e) {
+          setOdm({ parsed: null, error: `Couldn't read the ${odmSheet} tab: ${e instanceof Error ? e.message : e}` });
+        }
+      }
     } catch (e) {
       setParseError(`Couldn't read ${file.name}: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -161,7 +173,7 @@ export function ImportPage() {
     <div className="space-y-6">
       <PageHeader
         title="Import report"
-        description="Upload the inventory report (.xlsx). It's read in your browser; only the extracted PO lines are saved. Import weekly reports oldest first."
+        description="Upload the inventory report (.xlsx). It's read in your browser; only the extracted PO lines and open sales orders are saved. Import weekly reports oldest first."
       />
 
       <Card>
@@ -271,6 +283,8 @@ export function ImportPage() {
           )}
         </Card>
       )}
+
+      {fileName && <OutboundImportCard fileName={fileName} reportDate={reportDate} parsed={odm.parsed} error={odm.error} />}
 
       {sheet && (
         <Card>

@@ -160,9 +160,10 @@ function partsOf(orders: OutboundOrder[]): OutboundPart[] {
 
 /**
  * Open sales orders by ship date and by ship-to. Orders to the same ship-to on the same day share
- * trucks. Overdue (before `today`) and unscheduled orders are summarised over the whole snapshot.
+ * trucks. Overdue and unscheduled orders are summarised over the whole snapshot; overdue is measured
+ * against the report date (`asOf`), since orders due after it may have shipped since.
  */
-export function outboundReport(orders: OutboundOrder[], from: string, to: string, today: string) {
+export function outboundReport(orders: OutboundOrder[], from: string, to: string, asOf: string) {
   const inRange = orders.filter((o) => o.shipDate && o.shipDate >= from && o.shipDate <= to);
 
   const days: OutboundDay[] = [...groupBy(inRange, (o) => o.shipDate!)]
@@ -182,7 +183,7 @@ export function outboundReport(orders: OutboundOrder[], from: string, to: string
   return {
     days,
     shipTos,
-    overdue: backlog(orders.filter((o) => o.shipDate && o.shipDate < today)),
+    overdue: backlog(orders.filter((o) => o.shipDate && o.shipDate < asOf)),
     unscheduled: backlog(orders.filter((o) => !o.shipDate)),
   };
 }

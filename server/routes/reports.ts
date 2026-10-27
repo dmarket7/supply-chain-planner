@@ -96,6 +96,6 @@ reportsRoutes.get('/outbound', async (c) => {
     ...(o as OutboundOrderInput & { id: number; itemName: string | null }),
     pallets: ratios.line(o.cpn, o.businessGroup, o.quantity),
   }));
-  const body: OutboundResponse = { from, to, snapshot: info, ...outboundReport(orders, from, to, today) };
+  const body: OutboundResponse = { from, to, snapshot: info, ...outboundReport(orders, from, to, snap.reportDate) };
   return c.json(body);
 });

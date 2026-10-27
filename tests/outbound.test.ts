@@ -182,7 +182,8 @@ describe('outbound import and report', () => {
       order({ soNumber: '2', quantity: 1300 }), // same site and day: shares the truck
       order({ soNumber: '3', quantity: 100, shipTo: 'SITE B' }),
       order({ soNumber: '4', quantity: 40, cpn: 'H', mpn: 'MPN-H', businessGroup: 'HDD', shipTo: 'SITE B' }), // no ratio
-      order({ soNumber: '5', quantity: 200, shipDate: addDays(today, -3) }), // overdue
+      order({ soNumber: '5', quantity: 200, shipDate: '2026-10-15' }), // before the report date: overdue
+      order({ soNumber: '8', quantity: 200, shipDate: '2026-10-19', cpn: 'A' }), // after the report date, before today: not overdue
       order({ soNumber: '6', quantity: 200, shipDate: null, shipDateSource: null }), // unscheduled
       order({ soNumber: '7', quantity: 999, warehouse: 'DBS-TW-META' }),
     ]);
