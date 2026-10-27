@@ -7,6 +7,7 @@
   --text-secondary: #52514e;
   --grid: #e4e3df;
   --series-1: #2a78d6; /* parcel */
+  --series-1-soft: #c7dcf5; /* estimated (hatched with series-1) */
   --series-2: #eb6834; /* LTL */
   --series-3: #1baf7a; /* unspecified */
 }
@@ -18,6 +19,7 @@
     --text-secondary: #c3c2b7;
     --grid: #3a3a37;
     --series-1: #3987e5;
+    --series-1-soft: #1d3a5e;
     --series-2: #d95926;
     --series-3: #199e70;
   }

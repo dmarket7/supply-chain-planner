@@ -3,7 +3,7 @@ import { createElement as h } from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { CoverageRow, LineTracking, ShipmentDetail } from '../shared/types';
+import type { CoverageRow, LineTracking, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
 import { BranchProvider } from '../src/app/branch';
 import { TrackingPanel } from '../src/features/shipments/TrackingPanel';
 import { changeNotice, TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
@@ -162,5 +162,75 @@ describe('Shipment tracking panel', () => {
     const unresolved = panel(shipment({ ...base, label: 'unresolved', provider: null, courierCode: null, courierName: null, courierSource: null, reason: 'Forwarder · PNS… is not a specific carrier' }));
     expect(unresolved).toContain('Needs courier');
     expect(unresolved).toContain('Choose courier');
+  });
+});
+
+describe('pallet views', () => {
+  it('shows inbound in pallets by default and calls out estimated and missing ratios', async () => {
+    const { addDays, todayIso } = await import('../shared/dates');
+    const { RatioLookup } = await import('../shared/pallets');
+    const { groupInboundByDay, groupInboundByPart, withPallets } = await import('../server/reports');
+    const { InboundByDayPage } = await import('../src/features/inbound/InboundByDayPage');
+    const today = todayIso();
+    const base = { supplier: 'Acme', carrier: 'UPS', mode: 'parcel', status: 'in_transit', promisedArrivalDate: today, estimatedArrivalDate: null, actualArrivalDate: null };
+    const lines = withPallets(
+      [
+        { ...base, id: 1, partNumber: 'A', commodity: 'SSD', quantity: 2000 },
+        { ...base, id: 2, partNumber: 'B', commodity: 'SSD', quantity: 420 },
+        { ...base, id: 3, partNumber: 'C', commodity: 'HDD', quantity: 50 },
+      ] as unknown as Shipment[],
+      new RatioLookup([{ partNumber: 'A', unitsPerPallet: 840, palletsPerTruck: 26, productGroup: 'SSD', source: 'file' }]),
+    );
+    const html = render(h(InboundByDayPage), [
+      [['inbound-by-day', addDays(today, -7), addDays(today, 21), ''], { from: '', to: '', days: groupInboundByDay(lines), parts: groupInboundByPart(lines) }],
+    ]);
+    expect(html).toContain('Pallets today');
+    expect(html).toMatch(/2\.9<\/div>/); // 2000/840 + 420/840
+    expect(html).toContain('2 full + 2 partial');
+    expect(html).toContain('/settings/pallets?filter=needs-data');
+    expect(html).toContain('Improve pallet ratios');
+    expect(html).toContain('By part');
+  });
+
+  it('lists parts that need ratio data on the settings page', async () => {
+    const { PalletRatiosPage } = await import('../src/features/settings/PalletRatiosPage');
+    const row = (over: Partial<PalletRatioRow>): PalletRatioRow => ({
+      partNumber: 'A',
+      itemName: 'SSD 2TB',
+      commodity: 'SSD',
+      unitsPerPallet: 840,
+      palletsPerTruck: 26,
+      canDoubleStack: false,
+      note: null,
+      source: 'file',
+      fileValues: { unitsPerPallet: 840, palletsPerTruck: 26 },
+      updatedBy: 'x',
+      updatedAt: null,
+      basis: 'real',
+      effectiveUnitsPerPallet: 840,
+      conflict: false,
+      openLines: 1,
+      openUnits: 100,
+      ...over,
+    });
+    const data: PalletRatiosResponse = {
+      rows: [
+        row({}),
+        row({ partNumber: 'B', unitsPerPallet: null, basis: 'estimated', effectiveUnitsPerPallet: 840, estimate: { commodity: 'SSD', parts: 1 } }),
+        row({ partNumber: 'C', commodity: 'HDD', unitsPerPallet: null, source: null, basis: 'none', effectiveUnitsPerPallet: null }),
+        row({ partNumber: 'D', unitsPerPallet: null, basis: 'estimated', openLines: 0, openUnits: 0 }),
+      ],
+      estimates: [{ commodity: 'SSD', unitsPerPallet: 840, palletsPerTruck: 26, parts: 1, min: 840, max: 840, wideSpread: false }],
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['pallet-ratios'], data);
+    const html = renderToString(
+      h(QueryClientProvider, { client }, h(MemoryRouter, { initialEntries: ['/settings/pallets?filter=needs-data'] }, h(PalletRatiosPage))),
+    );
+    expect(html).toContain('>B<');
+    expect(html).toContain('>C<');
+    expect(html).not.toContain('>A<'); // real ratio
+    expect(html).not.toContain('>D<'); // no open inbound
+    expect(html).toMatch(/No real ratios yet, so no estimate for: (<!-- -->)?HDD/);
   });
 });

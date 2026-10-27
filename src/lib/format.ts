@@ -1,3 +1,4 @@
+import type { PalletBasis } from '../../shared/pallets';
 import type { ArrivalSource, LineTracking, Shipment, ShipmentStatus, TrackingLabel } from '../../shared/types';
 
 export function formatDate(iso: string | null | undefined, opts: Intl.DateTimeFormatOptions = {}): string {
@@ -136,3 +137,31 @@ export function trackingLabelText(t: LineTracking | undefined): string {
 }
 
 export const PROVIDER_NAMES: Record<string, string> = { fedex: 'FedEx API', trackingmore: 'TrackingMore' };
+
+/** Pallet-equivalents to one decimal ("0.4", "12.0"); whole numbers stay whole for full pallets. */
+export function formatPallets(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+export const BASIS_LABELS: Record<PalletBasis, string> = {
+  real: 'Real ratio',
+  estimated: 'Estimated',
+  none: 'No ratio',
+};
+
+export const BASIS_SHORT_LABELS: Record<PalletBasis, string> = { real: 'Real', estimated: 'Est.', none: 'No ratio' };
+
+export const BASIS_STYLES: Record<PalletBasis, string> = {
+  real: 'text-slate-600 ring-1 ring-inset ring-slate-300 dark:text-slate-300 dark:ring-slate-700',
+  estimated: 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-800',
+  none: 'bg-red-50 text-red-800 ring-1 ring-inset ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-800',
+};
+
+export function basisDescription(basis: PalletBasis, estimate?: { commodity: string; parts: number }): string {
+  if (basis === 'real') return 'Units per pallet from the Pallet Ratios file or entered in Settings';
+  if (basis === 'estimated' && estimate) {
+    return `Estimated from the median of ${estimate.parts} ${estimate.commodity} part${estimate.parts === 1 ? '' : 's'} with a real ratio`;
+  }
+  return 'No ratio for this part or its commodity: shown in units only';
+}

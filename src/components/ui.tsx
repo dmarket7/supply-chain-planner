@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react';
+import type { PalletBasis } from '../../shared/pallets';
 import type { LineTracking, ShipmentStatus } from '../../shared/types';
 import {
+  BASIS_LABELS,
+  BASIS_SHORT_LABELS,
+  BASIS_STYLES,
+  basisDescription,
   DATA_SOURCE_DESCRIPTIONS,
   DATA_SOURCE_DOT,
   DATA_SOURCE_LABELS,
@@ -29,11 +34,11 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
   );
 }
 
-export function StatTile({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+export function StatTile({ label, value, hint, warn = false }: { label: string; value: ReactNode; hint?: string; warn?: boolean }) {
   return (
-    <Card>
+    <Card className={warn ? 'border-amber-300 dark:border-amber-800' : ''}>
       <div className="text-sm text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      <div className={`mt-1 text-2xl font-semibold tabular-nums ${warn ? 'text-amber-700 dark:text-amber-300' : ''}`}>{value}</div>
       {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}
     </Card>
   );
@@ -107,6 +112,15 @@ export function TrackingBadge({ tracking }: { tracking: LineTracking | undefined
       className={`inline-block whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium ${TRACKING_LABEL_STYLE[tracking.label]}`}
     >
       {trackingLabelText(tracking)}
+    </span>
+  );
+}
+
+/** Whether a pallet figure uses the part's real ratio, a commodity estimate, or nothing. */
+export function BasisBadge({ basis, estimate, short = false }: { basis: PalletBasis; estimate?: { commodity: string; parts: number }; short?: boolean }) {
+  return (
+    <span title={basisDescription(basis, estimate)} className={`inline-block whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium ${BASIS_STYLES[basis]}`}>
+      {(short ? BASIS_SHORT_LABELS : BASIS_LABELS)[basis]}
     </span>
   );
 }

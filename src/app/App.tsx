@@ -9,6 +9,7 @@ const InboundByDayPage = lazy(() => import('../features/inbound/InboundByDayPage
 const ShipmentsPage = lazy(() => import('../features/shipments/ShipmentsPage').then((m) => ({ default: m.ShipmentsPage })));
 const ArrivalLogPage = lazy(() => import('../features/arrivals/ArrivalLogPage').then((m) => ({ default: m.ArrivalLogPage })));
 const TrackingSetupPage = lazy(() => import('../features/tracking/TrackingSetupPage').then((m) => ({ default: m.TrackingSetupPage })));
+const PalletRatiosPage = lazy(() => import('../features/settings/PalletRatiosPage').then((m) => ({ default: m.PalletRatiosPage })));
 const ImportPage = lazy(() => import('../features/import/ImportPage').then((m) => ({ default: m.ImportPage })));
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
         <Route path="arrivals" element={<ArrivalLogPage />} />
         <Route path="tracking" element={<TrackingSetupPage />} />
         <Route path="import" element={<ImportPage />} />
+        <Route path="settings/pallets" element={<PalletRatiosPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

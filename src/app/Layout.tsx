@@ -9,6 +9,7 @@ const NAV = [
   { to: '/arrivals', label: 'Arrival log' },
   { to: '/tracking', label: 'Carrier tracking' },
   { to: '/import', label: 'Import report' },
+  { to: '/settings/pallets', label: 'Pallet ratios' },
 ];
 
 export function Layout() {
