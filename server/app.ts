@@ -3,6 +3,7 @@ import { describeAuthUrlProblem, requireAuth } from './auth';
 import type { AppEnv, Env } from './env';
 import { branchesRoutes } from './routes/branches';
 import { importsRoutes } from './routes/imports';
+import { inventoryRoutes } from './routes/inventory';
 import { mappingsRoutes } from './routes/mappings';
 import { outboundRoutes } from './routes/outbound';
 import { palletRatiosRoutes } from './routes/palletRatios';
@@ -59,6 +60,7 @@ app.get('/health', (c) => {
 app.use('*', requireAuth);
 app.route('/branches', branchesRoutes);
 app.route('/imports', importsRoutes);
+app.route('/inventory', inventoryRoutes);
 app.route('/mappings', mappingsRoutes);
 app.route('/outbound', outboundRoutes);
 app.route('/pallet-ratios', palletRatiosRoutes);

@@ -319,3 +319,35 @@ export const outboundOrders = pgTable('outbound_orders', {
   index('outbound_orders_ship_date_idx').on(t.snapshotId, t.shipDate),
   index('outbound_orders_cpn_idx').on(t.snapshotId, t.cpn),
 ]);
+
+/** One uploaded Inventory Summary tab. The latest completed one by report date is current. */
+export const inventorySnapshots = pgTable('inventory_snapshots', {
+  id: serial('id').primaryKey(),
+  fileName: text('file_name').notNull(),
+  reportDate: date('report_date').notNull(),
+  uploadedBy: text('uploaded_by').notNull(),
+  uploadedAt: timestamp('uploaded_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  rowCount: integer('row_count').notNull().default(0),
+  positionCount: integer('position_count').notNull().default(0),
+}, (t) => [index('inventory_snapshots_report_idx').on(t.reportDate)]);
+
+/** Stock of one part in one branch, summed over its open receipt lots. */
+export const inventoryPositions = pgTable('inventory_positions', {
+  id: serial('id').primaryKey(),
+  snapshotId: integer('snapshot_id').notNull().references(() => inventorySnapshots.id, { onDelete: 'cascade' }),
+  partNumber: text('part_number').notNull(),
+  branch: text('branch').notNull(),
+  vendorPn: text('vendor_pn'),
+  description: text('description'),
+  commodity: text('commodity'),
+  onhand: numeric('onhand', { mode: 'number' }).notNull(),
+  reserved: numeric('reserved', { mode: 'number' }).notNull(),
+  allocated: numeric('allocated', { mode: 'number' }).notNull(),
+  /** Free to reserve for ODM orders; can be negative on one side of a transfer between branches. */
+  available: numeric('available', { mode: 'number' }).notNull(),
+  /** Still open with the supplier. */
+  onReceipt: numeric('on_receipt', { mode: 'number' }).notNull(),
+  oldestReceiptDate: date('oldest_receipt_date'),
+  sourceRows: integer('source_rows').notNull().default(1),
+}, (t) => [uniqueIndex('inventory_positions_part_idx').on(t.snapshotId, t.partNumber, t.branch)]);

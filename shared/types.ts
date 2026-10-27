@@ -1,5 +1,6 @@
 import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues, TruckSummary } from './pallets';
 import type { ProgressCounts } from './progress';
+import type { OrderSupply, PartSupply, Readiness } from './supply';
 import { z } from 'zod';
 
 export const SHIPMENT_STATUSES = [
@@ -560,6 +561,14 @@ export interface OutboundOrder extends OutboundOrderInput {
   /** From the Pallet Ratios file, when the part is in it. */
   itemName: string | null;
   pallets: LinePallets;
+  /** Null until an Inventory Summary has been imported. */
+  supply: OrderSupply | null;
+}
+
+export interface ReadinessTotals {
+  orders: number;
+  units: number;
+  palletEq: number;
 }
 
 export interface OutboundDay {
@@ -568,6 +577,7 @@ export interface OutboundDay {
   pallets: PalletSummary;
   /** Orders to the same ship-to on this day share trucks. */
   trucks: TruckSummary;
+  readiness: Partial<Record<Readiness, ReadinessTotals>>;
 }
 
 /** One part (MPN) going to one ship-to. */
@@ -591,6 +601,7 @@ export interface OutboundShipTo {
   orders: number;
   pallets: PalletSummary;
   trucks: TruckSummary;
+  readiness: Partial<Record<Readiness, ReadinessTotals>>;
   nextShipDate: string | null;
   parts: OutboundPart[];
   lines: OutboundOrder[];
@@ -600,16 +611,155 @@ export interface OutboundBacklog {
   orders: number;
   pallets: PalletSummary;
   trucks: TruckSummary;
+  readiness: Partial<Record<Readiness, ReadinessTotals>>;
 }
 
 export interface OutboundResponse {
   from: string;
   to: string;
   snapshot: OutboundSnapshotInfo | null;
+  /** Report date of the inventory the readiness is based on; null = not imported yet. */
+  inventoryReportDate: string | null;
   days: OutboundDay[];
   shipTos: OutboundShipTo[];
   /** Whole snapshot, outside the date range: ship date before the report date, still listed as open. */
   overdue: OutboundBacklog;
   /** Whole snapshot: no ship date (blank or a 2099 placeholder). */
   unscheduled: OutboundBacklog;
+}
+
+export const INVENTORY_CHUNK_SIZE = 500;
+
+/** Stock of one part in one branch, summed over the open receipt lots of the Inventory Summary tab. */
+export const inventoryPositionInputSchema = z.object({
+  partNumber: z.string().min(1),
+  branch: z.string().min(1),
+  vendorPn: nullableText,
+  description: nullableText,
+  commodity: nullableText,
+  onhand: z.number(),
+  reserved: z.number(),
+  allocated: z.number(),
+  available: z.number(),
+  onReceipt: z.number(),
+  oldestReceiptDate: nullableDate,
+  sourceRows: z.number().int().positive(),
+});
+export type InventoryPositionInput = z.infer<typeof inventoryPositionInputSchema>;
+
+export const startInventorySchema = z.object({
+  fileName: z.string().min(1),
+  reportDate: isoDate,
+  rowCount: z.number().int().nonnegative(),
+  positionCount: z.number().int().nonnegative(),
+});
+
+export const inventoryPositionsChunkSchema = z.object({
+  positions: z.array(inventoryPositionInputSchema).min(1).max(INVENTORY_CHUNK_SIZE),
+});
+
+export interface InventorySnapshotInfo {
+  id: number;
+  fileName: string;
+  reportDate: string;
+  rowCount: number;
+  positionCount: number;
+}
+
+export interface SupplyOrderRow {
+  id: number;
+  /** Null until an Inventory Summary has been imported. */
+  readiness: Readiness | null;
+  coveredBy: string | null;
+  supplierShipDate: string | null;
+  shortUnits: number;
+  soNumber: string;
+  shipTo: string | null;
+  cpn: string | null;
+  mpn: string | null;
+  status: string | null;
+  quantity: number;
+  shipDate: string | null;
+}
+
+export interface SupplyInboundRow {
+  id: number;
+  supplier: string;
+  poNumber: string | null;
+  lineRef: string | null;
+  branch: string | null;
+  quantity: number | null;
+  eta: string | null;
+  status: ShipmentStatus;
+}
+
+export interface SupplyPartRow extends PartSupply {
+  mpn: string | null;
+  orderRows: SupplyOrderRow[];
+  inbound: SupplyInboundRow[];
+}
+
+export interface SupplyResponse {
+  inventory: InventorySnapshotInfo | null;
+  outboundReportDate: string | null;
+  parts: SupplyPartRow[];
+}
+
+export interface DashboardTop {
+  name: string;
+  palletEq: number;
+  units: number;
+  count: number;
+}
+
+/** One column of the dashboard flow chart: before today, then four weeks from today. */
+export interface DashboardBucket {
+  key: string;
+  /** Null for the "before today" bucket. */
+  from: string | null;
+  to: string;
+  inbound: { lines: number; pallets: PalletSummary; topSuppliers: DashboardTop[] };
+  outbound: OutboundBacklog & { topShipTos: DashboardTop[] };
+}
+
+export interface DashboardInboundRow {
+  id: number;
+  supplier: string;
+  poNumber: string | null;
+  lineRef: string | null;
+  partNumber: string | null;
+  quantity: number | null;
+  eta: string;
+}
+
+export interface DashboardShortPart {
+  partNumber: string;
+  site: string;
+  description: string | null;
+  shortUnits: number;
+  firstShortDate: string | null;
+  orders: number;
+}
+
+export interface DashboardResponse {
+  asOf: { purchaseOrders: string | null; outbound: string | null; inventory: string | null };
+  buckets: DashboardBucket[];
+  exceptions: {
+    /** Late or short, shipping in the next 14 days (or already due). */
+    atRisk: { count: number; units: number; rows: SupplyOrderRow[] };
+    /** Ship date before the outbound report date, still open. */
+    overdue: { count: number; byReadiness: Partial<Record<Readiness, number>>; rows: SupplyOrderRow[] };
+    /** Expected date passed, not arrived. */
+    lateInbound: { count: number; rows: DashboardInboundRow[] };
+    shortParts: { count: number; units: number; rows: DashboardShortPart[] };
+    dataGaps: {
+      palletEq: number;
+      estimatedPalletEq: number;
+      noRatioLines: number;
+      noRatioUnits: number;
+      /** Open orders relying on inbound lines the supplier hasn't given an ETA for. */
+      noEtaOrders: number;
+      noEtaUnits: number;
+    };
+  };
 }

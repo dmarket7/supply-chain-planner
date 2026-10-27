@@ -249,11 +249,12 @@ describe('outbound page', () => {
     const orders = [
       { ...base, id: 1, soNumber: '1', shipTo: 'CELESTICA LLC-RICHARDSON', cpn: 'A', mpn: 'MPN-A', businessGroup: 'SSD', quantity: 1300, shipDate: addDays(today, 1) },
       { ...base, id: 2, soNumber: '2', shipTo: 'CELESTICA LLC-RICHARDSON', cpn: 'B', mpn: 'MPN-B', businessGroup: 'SSD', quantity: 1300, shipDate: addDays(today, 1) },
-    ].map((o) => ({ ...o, pallets: lookup.line(o.cpn, o.businessGroup, o.quantity) }));
+    ].map((o) => ({ ...o, pallets: lookup.line(o.cpn, o.businessGroup, o.quantity), supply: null }));
     const data: OutboundResponse = {
       from: '',
       to: '',
       snapshot: { id: 1, fileName: 'r.xlsx', reportDate: '2026-10-18', rowCount: 3, orderCount: 2, skippedQuotations: 1, changes: { previousReportDate: '2026-10-10', noLongerListed: 928, added: 350, quantityChanged: 26 } },
+      inventoryReportDate: null,
       ...outboundReport(orders, addDays(today, -7), addDays(today, 28), today),
     };
     const html = render(h(OutboundPage), [[['outbound', addDays(today, -7), addDays(today, 28), ''], data]]);
@@ -269,7 +270,7 @@ describe('outbound page', () => {
     const { outboundReport } = await import('../server/reports');
     const { OutboundPage } = await import('../src/features/outbound/OutboundPage');
     const today = todayIso();
-    const data: OutboundResponse = { from: '', to: '', snapshot: null, ...outboundReport([], today, today, today) };
+    const data: OutboundResponse = { from: '', to: '', snapshot: null, inventoryReportDate: null, ...outboundReport([], today, today, today) };
     const html = render(h(OutboundPage), [[['outbound', addDays(today, -7), addDays(today, 28), ''], data]]);
     expect(html).toContain('No outbound orders yet');
   });
