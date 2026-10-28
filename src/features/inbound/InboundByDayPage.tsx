@@ -112,7 +112,7 @@ export function InboundByDayPage() {
         ) : days.length === 0 ? (
           <Empty>No inbound shipments in this range. Import a report to get started.</Empty>
         ) : (
-          <InboundChart days={days} metric={metric} onSelectDay={selectDay} />
+          <InboundChart days={days} metric={metric} onSelectDay={(d) => d && selectDay(d)} />
         )}
       </Card>
 
