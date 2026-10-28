@@ -312,8 +312,8 @@ function RegistrationCard({ enabled }: { enabled: boolean }) {
       <h2 className="text-sm font-medium">Register with TrackingMore</h2>
       <p className="mt-1 text-xs text-slate-500">
         TrackingMore only tracks numbers registered with it, and each new registration uses one credit. Numbers already registered are linked to new PO
-        lines for free and are never registered twice. After registering, use <Link to="/shipments" className="underline">Refresh tracking</Link> on the
-        Shipments page to fetch updates (free).
+        lines for free and are never registered twice. After registering, use <Link to="/inbound" className="underline">Refresh tracking</Link> on the
+        Inbound page to fetch updates (free).
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
         <label className="flex items-center gap-2">

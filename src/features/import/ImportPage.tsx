@@ -25,6 +25,7 @@ import { normalizeRow, reportDateFromFileName, type NormalizedRow } from './norm
 import { findInventorySheet, parseInventorySummary, type ParsedInventory } from './parseInventorySummary';
 import { findOdmSheet, parseOdmOrders, type ParsedOdmOrders } from './parseOdmOrders';
 import { headerSignature, parseSheet, readWorkbook, type ParsedSheet } from './parseWorkbook';
+import { ImportHistory } from './ImportHistory';
 import { uploadChunked } from './uploadChunked';
 
 /** The tab that holds inbound PO lines in the Meerkat report; other reports fall back to the first sheet. */
@@ -82,7 +83,7 @@ function poResultText(r: ImportResult): string {
 
 function outboundResultText(r: OutboundSnapshotInfo): string {
   const changes = r.changes
-    ? ` Since ${formatDate(r.changes.previousReportDate)}: ${r.changes.noLongerListed.toLocaleString()} SOs no longer listed, ${r.changes.added.toLocaleString()} new, ${r.changes.quantityChanged.toLocaleString()} with a changed quantity.`
+    ? ` Since ${formatDate(r.changes.previousReportDate)}: ${r.changes.noLongerListed.toLocaleString()} SOs no longer listed, ${r.changes.added.toLocaleString()} new, ${r.changes.quantityChanged.toLocaleString()} with a changed quantity; ship date pushed out on ${r.changes.summary.pushedOut.toLocaleString()} and pulled in on ${r.changes.summary.pulledIn.toLocaleString()}.`
     : '';
   return `${r.orderCount.toLocaleString()} sales orders.${changes}`;
 }
@@ -366,7 +367,7 @@ export function ImportPage() {
               {allDone && anyAvailable && (
                 <span className="text-sm">
                   <Link to="/" className="underline">View the dashboard →</Link>{' '}
-                  {steps.po.status === 'done' && <Link to="/shipments?progress=changed" className="ml-2 underline">See what changed →</Link>}
+                  {steps.po.status === 'done' && <Link to="/inbound?changed=changed" className="ml-2 underline">See what changed →</Link>}
                 </span>
               )}
             </div>
@@ -533,6 +534,7 @@ export function ImportPage() {
           </Card>
         </>
       )}
+      <ImportHistory />
     </div>
   );
 }

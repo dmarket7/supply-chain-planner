@@ -1,9 +1,10 @@
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { READINESS_LABELS } from '../../../shared/supply';
+import { READINESS, READINESS_LABELS } from '../../../shared/supply';
 import type { SupplyPartRow, SupplyResponse } from '../../../shared/types';
 import { useBranch } from '../../app/branch';
+import { DataTable, type Column } from '../../components/DataTable';
 import { ReadinessBadge, readinessReason } from '../../components/readiness';
 import { Card, Empty, ErrorNote, PageHeader, StatTile, StatusBadge, tableCls, tdCls, thCls } from '../../components/ui';
 import { api, qs } from '../../lib/api';
@@ -13,14 +14,76 @@ const FILTERS = {
   'at-risk': { label: 'At risk', test: (p: SupplyPartRow) => p.readiness === 'late' || p.readiness === 'short' },
   short: { label: 'Short', test: (p: SupplyPartRow) => p.shortUnits > 0 },
   demand: { label: 'With open orders', test: (p: SupplyPartRow) => p.orders > 0 },
+  changed: { label: 'Stock changed', test: (p: SupplyPartRow) => !!p.availableChange },
   all: { label: 'All parts', test: () => true },
 } as const;
 type Filter = keyof typeof FILTERS;
 const isFilter = (v: string | null): v is Filter => !!v && v in FILTERS;
 
-const SHOWN = 200;
 const right = `${tdCls} text-right tabular-nums`;
 const n = (v: number) => (v ? v.toLocaleString() : '—');
+const partKey = (p: SupplyPartRow) => `${p.partNumber}|${p.site}`;
+
+const COLUMNS: Column<SupplyPartRow>[] = [
+  {
+    id: 'part',
+    label: 'Part',
+    sortValue: (p) => p.partNumber,
+    render: (p) => (
+      <>
+        <span className="font-mono text-xs">{p.partNumber}</span>
+        <div className="max-w-xs truncate text-xs text-slate-500" title={p.description ?? undefined}>
+          {[p.mpn, p.description].filter(Boolean).join(' · ')}
+        </div>
+      </>
+    ),
+  },
+  { id: 'site', label: 'Site', sortValue: (p) => p.site, render: (p) => p.site || '—', className: 'text-xs' },
+  { id: 'commodity', label: 'Commodity', sortValue: (p) => p.commodity, render: (p) => p.commodity ?? '—', className: 'text-xs', defaultHidden: true },
+  { id: 'available', label: 'Available', align: 'right', sortValue: (p) => p.available, render: (p) => n(p.available) },
+  {
+    id: 'availableChange',
+    label: 'Δ available',
+    title: 'Since the previous inventory report',
+    align: 'right',
+    sortValue: (p) => p.availableChange,
+    render: (p) =>
+      p.availableChange ? (
+        <span className={p.availableChange < 0 ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}>
+          {p.availableChange > 0 ? '+' : ''}
+          {p.availableChange.toLocaleString()}
+        </span>
+      ) : (
+        '—'
+      ),
+  },
+  { id: 'held', label: 'Held', align: 'right', sortValue: (p) => p.held, render: (p) => n(p.held) },
+  { id: 'onhand', label: 'On hand', align: 'right', sortValue: (p) => p.onhand, render: (p) => n(p.onhand), defaultHidden: true },
+  { id: 'onReceipt', label: 'On receipt', align: 'right', sortValue: (p) => p.onReceipt, render: (p) => n(p.onReceipt) },
+  { id: 'physical', label: 'Reserved in stock', align: 'right', sortValue: (p) => p.demand.physical, render: (p) => n(p.demand.physical) },
+  { id: 'ordered', label: 'Reserved inbound', align: 'right', sortValue: (p) => p.demand.ordered, render: (p) => n(p.demand.ordered) },
+  { id: 'onOrder', label: 'On order', align: 'right', sortValue: (p) => p.demand.onOrder, render: (p) => n(p.demand.onOrder) },
+  {
+    id: 'short',
+    label: 'Short',
+    align: 'right',
+    sortValue: (p) => p.shortUnits,
+    render: (p) => <span className={p.shortUnits ? 'font-medium text-red-700 dark:text-red-300' : ''}>{n(p.shortUnits)}</span>,
+  },
+  { id: 'firstShort', label: 'First short', sortValue: (p) => p.firstShortDate, render: (p) => <span className="whitespace-nowrap">{formatDate(p.firstShortDate, { year: undefined })}</span> },
+  { id: 'nextInbound', label: 'Next inbound', sortValue: (p) => p.nextInboundEta, render: (p) => <span className="whitespace-nowrap">{formatDate(p.nextInboundEta, { year: undefined })}</span> },
+  {
+    id: 'status',
+    label: 'Status',
+    sortValue: (p) => (p.readiness ? READINESS.indexOf(p.readiness) : null),
+    render: (p) =>
+      p.readiness ? (
+        <ReadinessBadge detail={{ readiness: p.readiness, coveredBy: null, supplierShipDate: null, shortUnits: p.shortUnits }} shipDate={null} />
+      ) : (
+        <span className="text-xs text-slate-500">No open orders</span>
+      ),
+  },
+];
 
 export function InventoryPage() {
   const { branch } = useBranch();
@@ -28,7 +91,6 @@ export function InventoryPage() {
   const filter: Filter = isFilter(params.get('filter')) ? (params.get('filter') as Filter) : 'demand';
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState<string | null>(null);
-  const [all, setAll] = useState(false);
   const { data, error, isLoading } = useQuery({
     queryKey: ['supply', branch],
     queryFn: () => api<SupplyResponse>(`/reports/supply${qs({ branch: branch || undefined })}`),
@@ -87,75 +149,25 @@ export function InventoryPage() {
             />
           </div>
 
-          <Card className="overflow-x-auto p-0">
+          <Card className="p-0">
             {isLoading ? (
               <div className="m-4 h-40 animate-pulse rounded-md bg-slate-100 dark:bg-slate-900" />
-            ) : shown.length === 0 ? (
-              <p className="p-4 text-sm text-slate-500">No parts match.</p>
             ) : (
-              <table className={tableCls}>
-                <thead>
-                  <tr>
-                    <th className={thCls}>Part</th>
-                    <th className={thCls}>Site</th>
-                    {['Available', 'Held', 'On receipt', 'Reserved in stock', 'Reserved inbound', 'On order', 'Short'].map((h) => (
-                      <th key={h} className={`${thCls} whitespace-nowrap text-right`}>{h}</th>
-                    ))}
-                    <th className={`${thCls} whitespace-nowrap`}>First short</th>
-                    <th className={`${thCls} whitespace-nowrap`}>Next inbound</th>
-                    <th className={thCls}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(all ? shown : shown.slice(0, SHOWN)).map((p) => {
-                    const key = `${p.partNumber}|${p.site}`;
-                    const expanded = open === key;
-                    return (
-                      <Fragment key={key}>
-                        <tr onClick={() => setOpen(expanded ? null : key)} aria-expanded={expanded} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900">
-                          <td className={tdCls}>
-                            <span className="mr-1 inline-block w-3 text-slate-400">{expanded ? '▾' : '▸'}</span>
-                            <span className="font-mono text-xs">{p.partNumber}</span>
-                            <div className="ml-4 max-w-xs truncate text-xs text-slate-500" title={p.description ?? undefined}>
-                              {[p.mpn, p.description].filter(Boolean).join(' · ')}
-                            </div>
-                          </td>
-                          <td className={`${tdCls} text-xs`}>{p.site || '—'}</td>
-                          <td className={right}>{n(p.available)}</td>
-                          <td className={right}>{n(p.held)}</td>
-                          <td className={right}>{n(p.onReceipt)}</td>
-                          <td className={right}>{n(p.demand.physical)}</td>
-                          <td className={right}>{n(p.demand.ordered)}</td>
-                          <td className={right}>{n(p.demand.onOrder)}</td>
-                          <td className={`${right} ${p.shortUnits ? 'font-medium text-red-700 dark:text-red-300' : ''}`}>{n(p.shortUnits)}</td>
-                          <td className={`${tdCls} whitespace-nowrap`}>{formatDate(p.firstShortDate, { year: undefined })}</td>
-                          <td className={`${tdCls} whitespace-nowrap`}>{formatDate(p.nextInboundEta, { year: undefined })}</td>
-                          <td className={tdCls}>
-                            {p.readiness ? (
-                              <ReadinessBadge detail={{ readiness: p.readiness, coveredBy: null, supplierShipDate: null, shortUnits: p.shortUnits }} shipDate={null} />
-                            ) : (
-                              <span className="text-xs text-slate-500">No open orders</span>
-                            )}
-                          </td>
-                        </tr>
-                        {expanded && (
-                          <tr>
-                            <td colSpan={12} className="border-b border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                              <PartDetail part={p} />
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <DataTable
+                id="inventory-parts"
+                rows={shown}
+                columns={COLUMNS}
+                rowKey={partKey}
+                onRowClick={(p) => setOpen(open === partKey(p) ? null : partKey(p))}
+                highlight={(p) => !!p.availableChange}
+                renderExpanded={(p) => (open === partKey(p) ? <PartDetail part={p} /> : null)}
+                empty="No parts match."
+              />
             )}
-            {shown.length > SHOWN && (
-              <button onClick={() => setAll(!all)} className="m-4 text-sm text-slate-500 hover:underline">
-                {all ? 'Show fewer' : `Show all ${shown.length} parts`}
-              </button>
-            )}
+            <p className="px-4 py-2 text-xs text-slate-500">
+              Click a part for its orders and inbound PO lines.
+              {parts.some((p) => p.availableChange !== null) && ' Tinted rows: available stock changed since the previous inventory report.'}
+            </p>
           </Card>
         </>
       )}

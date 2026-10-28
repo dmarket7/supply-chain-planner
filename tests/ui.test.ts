@@ -3,7 +3,7 @@ import { createElement as h } from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { CoverageRow, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
+import type { CoverageRow, ImportHistoryRow, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
 import { BranchProvider } from '../src/app/branch';
 import { TrackingPanel } from '../src/features/shipments/TrackingPanel';
 import { changeNotice, TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
@@ -166,30 +166,60 @@ describe('Shipment tracking panel', () => {
 });
 
 describe('pallet views', () => {
-  it('shows inbound in pallets by default and calls out estimated and missing ratios', async () => {
+  async function inboundFixture() {
     const { addDays, todayIso } = await import('../shared/dates');
     const { RatioLookup } = await import('../shared/pallets');
     const { groupInboundByDay, groupInboundByPart, withPallets } = await import('../server/reports');
-    const { InboundByDayPage } = await import('../src/features/inbound/InboundByDayPage');
     const today = todayIso();
-    const base = { supplier: 'Acme', carrier: 'UPS', mode: 'parcel', status: 'in_transit', promisedArrivalDate: today, estimatedArrivalDate: null, actualArrivalDate: null };
+    const base = { supplier: 'Acme', carrier: 'UPS', mode: 'parcel', status: 'in_transit', promisedArrivalDate: today, estimatedArrivalDate: null, actualArrivalDate: null, latestChange: null };
     const lines = withPallets(
       [
-        { ...base, id: 1, partNumber: 'A', commodity: 'SSD', quantity: 2000 },
-        { ...base, id: 2, partNumber: 'B', commodity: 'SSD', quantity: 420 },
-        { ...base, id: 3, partNumber: 'C', commodity: 'HDD', quantity: 50 },
+        { ...base, id: 1, poNumber: 'PO-TODAY', partNumber: 'A', commodity: 'SSD', quantity: 2000 },
+        { ...base, id: 2, poNumber: 'PO-TODAY-2', partNumber: 'B', commodity: 'SSD', quantity: 420 },
+        { ...base, id: 3, poNumber: 'PO-HDD', partNumber: 'C', commodity: 'HDD', quantity: 50, promisedArrivalDate: addDays(today, 2) },
+        { ...base, id: 4, poNumber: 'PO-UNDATED', partNumber: 'A', commodity: 'SSD', quantity: 10, status: 'awaiting_shipment', promisedArrivalDate: null },
       ] as unknown as Shipment[],
       new RatioLookup([{ partNumber: 'A', unitsPerPallet: 840, palletsPerTruck: 26, productGroup: 'SSD', source: 'file' }]),
     );
-    const html = render(h(InboundByDayPage), [
-      [['inbound-by-day', addDays(today, -7), addDays(today, 21), ''], { from: '', to: '', days: groupInboundByDay(lines), parts: groupInboundByPart(lines) }],
-    ]);
+    const dated = lines.filter((l) => l.promisedArrivalDate);
+    const data: [unknown[], unknown][] = [
+      [['inbound-by-day', addDays(today, -7), addDays(today, 21), ''], { from: '', to: '', days: groupInboundByDay(dated), parts: groupInboundByPart(dated) }],
+      [['shipments', ''], lines],
+      [['progress-latest', ''], null],
+    ];
+    return { today, addDays, data };
+  }
+
+  it('shows inbound in pallets by default and calls out estimated and missing ratios', async () => {
+    const { InboundPage } = await import('../src/features/inbound/InboundPage');
+    const { data } = await inboundFixture();
+    const html = render(h(InboundPage), data, '/inbound');
     expect(html).toContain('Pallets today');
     expect(html).toMatch(/2\.9<\/div>/); // 2000/840 + 420/840
     expect(html).toContain('2 full + 2 partial');
     expect(html).toContain('/settings/pallets?filter=needs-data');
     expect(html).toContain('Improve pallet ratios');
     expect(html).toContain('By part');
+    // The table lists lines expected in the range; lines with no date yet sit behind their chip.
+    expect(html).toContain('PO-HDD');
+    expect(html).not.toContain('PO-UNDATED');
+  });
+
+  it('filters the lines to a day picked on the chart, or to those with no date yet', async () => {
+    const { InboundPage } = await import('../src/features/inbound/InboundPage');
+    const { data, today, addDays } = await inboundFixture();
+    const day = render(h(InboundPage), data, `/inbound?date=${addDays(today, 2)}`);
+    expect(day).toContain('PO-HDD');
+    expect(day).not.toContain('PO-TODAY');
+    const undated = render(h(InboundPage), data, '/inbound?dates=undated');
+    expect(undated).toContain('PO-UNDATED');
+    expect(undated).not.toContain('PO-HDD');
+  });
+
+  it('sends old Shipments links to Inbound', async () => {
+    const { inboundPathForShipments } = await import('../src/app/App');
+    expect(inboundPathForShipments(new URLSearchParams('progress=eta_moved'))).toBe('/inbound?changed=eta_moved');
+    expect(inboundPathForShipments(new URLSearchParams())).toBe('/inbound');
   });
 
   it('lists parts that need ratio data on the settings page', async () => {
@@ -351,6 +381,34 @@ describe('dashboard and inventory pages', () => {
     expect(html).toContain('>A<');
     expect(html).toContain('>Short<');
     expect(html).toContain('300');
+  });
+
+  it('filters to parts whose available stock changed since the previous inventory', async () => {
+    const { InventoryPage } = await import('../src/features/inventory/InventoryPage');
+    const { parts, today } = await fixture();
+    const withChange = [{ ...parts[0], availableChange: -120 }, { ...parts[0], partNumber: 'STEADY', availableChange: 0 }];
+    const html = render(h(InventoryPage), [[['supply', ''], { inventory: { id: 1, fileName: 'r.xlsx', reportDate: today, rowCount: 1, positionCount: 1 }, outboundReportDate: today, parts: withChange }]], '/inventory?filter=changed');
+    expect(html).toContain('-120');
+    expect(html).not.toContain('STEADY');
+  });
+});
+
+describe('import history', () => {
+  it('links the newest report\'s changes to the filtered views', async () => {
+    const { ImportHistory } = await import('../src/features/import/ImportHistory');
+    const summary = { added: 3, gone: 2, pushedOut: 155, pulledIn: 125, newlyConfirmed: 0, dockMoved: 154, quantity: 13, status: 0, noCause: 114 };
+    const counts = { shipped: 4, arrived: 5, eta_moved: 6, tracking: 0, new_order: 7, reopened: 0 };
+    const rows: ImportHistoryRow[] = [
+      { reportDate: '2026-10-18', inbound: { importId: 2, fileName: 'b', counts }, outbound: { snapshotId: 2, orderCount: 10, summary }, inventory: { snapshotId: 2, positionCount: 9, up: 8, down: 1 } },
+      { reportDate: '2026-10-10', inbound: { importId: 1, fileName: 'a', counts }, outbound: { snapshotId: 1, orderCount: 9, summary: null }, inventory: null },
+    ];
+    const html = render(h(ImportHistory), [[['import-history'], rows]]);
+    expect(html).toContain('/outbound?changed=pushed');
+    expect(html).toContain('/inbound?changed=eta_moved');
+    expect(html).toContain('/inventory?filter=changed');
+    expect(html).toMatch(/114(<!-- -->)? date moves with no cause/);
+    expect(html).toContain('first report');
+    expect(html.match(/href="\/inbound\?changed=eta_moved"/g)).toHaveLength(1); // only the newest row links
   });
 });
 
