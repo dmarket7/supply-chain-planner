@@ -1,4 +1,5 @@
 import { addDays } from '../shared/dates';
+import { orderLineKey } from '../shared/orderChanges';
 import { addLine, emptySummary, mergeSummaries, type RatioLookup } from '../shared/pallets';
 import { siteOf, type Readiness } from '../shared/supply';
 import type {
@@ -26,6 +27,7 @@ export function withSupply(supply: Supply, ratios: RatioLookup): OutboundOrder[]
     ...o,
     pallets: ratios.line(o.cpn, o.businessGroup, o.quantity),
     supply: supply.check?.orders.get(o.id) ?? null,
+    changes: supply.changes.get(orderLineKey(o.soNumber, o.cpn)) ?? [],
   }));
 }
 
@@ -49,7 +51,8 @@ export function orderRow(o: LoadedOrder & Pick<OutboundOrder, 'supply'>): Supply
 const partKey = (part: string | null, branch: string | null) => `${part ?? ''}\u0000${siteOf(branch)}`;
 
 /** Parts from the supply check, each with the orders that need it and its inbound lines. */
-export function supplyParts(supply: Supply): SupplyPartRow[] {
+/** `previous`: available per part and site at the previous inventory report (see `previousAvailable`). */
+export function supplyParts(supply: Supply, previous: Map<string, number> | null = null): SupplyPartRow[] {
   if (!supply.check) return [];
   const check = supply.check;
   const orders = groupBy(supply.orders, (o) => partKey(o.cpn, o.warehouse));
@@ -61,6 +64,7 @@ export function supplyParts(supply: Supply): SupplyPartRow[] {
     return {
       ...p,
       mpn: list[0]?.mpn ?? vendorPn.get(k) ?? null,
+      availableChange: previous ? p.available - (previous.get(k) ?? 0) : null,
       orderRows: list
         .map((o) => orderRow({ ...o, supply: check.orders.get(o.id) ?? null }))
         .sort((a, b) => (a.shipDate ?? '9999').localeCompare(b.shipDate ?? '9999')),

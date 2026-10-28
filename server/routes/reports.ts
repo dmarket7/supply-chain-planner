@@ -6,7 +6,7 @@ import { getDb } from '../db/client';
 import { dashboard, supplyParts, withSupply } from '../dashboard';
 import { imports, promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
-import { inventoryInfo } from '../inventory';
+import { inventoryInfo, previousAvailable } from '../inventory';
 import { snapshotInfo } from '../outbound';
 import { loadRatioLookup } from '../palletRatios';
 import { groupInboundByDay, groupInboundByPart, outboundReport, supplierScorecard, toArrivalEntry, withPallets } from '../reports';
@@ -94,7 +94,7 @@ reportsRoutes.get('/supply', async (c) => {
   const body: SupplyResponse = {
     inventory: supply.inventory ? inventoryInfo(supply.inventory) : null,
     outboundReportDate: supply.outbound?.reportDate ?? null,
-    parts: supplyParts(supply),
+    parts: supplyParts(supply, supply.inventory ? await previousAvailable(db, supply.inventory) : null),
   };
   return c.json(body);
 });

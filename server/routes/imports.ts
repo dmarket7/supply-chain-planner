@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
 import { and, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import { baseDedupeKey } from '../../shared/importKeys';
-import { importRowsSchema, startImportSchema, type ImportResult } from '../../shared/types';
+import { importRowsSchema, startImportSchema, type ImportHistoryRow, type ImportResult } from '../../shared/types';
 import { getDb } from '../db/client';
-import { imports, lineChanges, promisedDateHistory, shipments, suppliers } from '../db/schema';
+import { imports, inventoryPositions, inventorySnapshots, lineChanges, outboundSnapshots, promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
+import { availableBySite } from '../inventory';
+import { changeSummary } from '../outbound';
 import { planImport, poLineKey } from '../importPlan';
 import { progressCounts } from '../progress';
 import { chunk } from './common';
@@ -14,6 +16,80 @@ export const importsRoutes = new Hono<AppEnv>();
 importsRoutes.get('/', async (c) => {
   const db = getDb(c.env.DATABASE_URL);
   const rows = await db.select().from(imports).orderBy(desc(imports.uploadedAt)).limit(50);
+  return c.json(rows);
+});
+
+const HISTORY_REPORTS = 12;
+
+/**
+ * What changed in each recent report, per tab: PO line progress, sales order changes, and parts
+ * whose available stock went up or down at a site.
+ */
+importsRoutes.get('/history', async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const newestFirst = <T extends { reportDate: string; id: number }>(rows: T[]) => {
+    const byDate = new Map<string, T>();
+    for (const r of rows) {
+      const cur = byDate.get(r.reportDate);
+      if (!cur || r.id > cur.id) byDate.set(r.reportDate, r);
+    }
+    return [...byDate.values()].sort((a, b) => b.reportDate.localeCompare(a.reportDate)).slice(0, HISTORY_REPORTS + 1);
+  };
+  const [poRows, outRows, invRows] = await Promise.all([
+    db.select({ id: imports.id, reportDate: imports.reportDate, fileName: imports.fileName }).from(imports).where(isNotNull(imports.completedAt)),
+    db
+      .select({ id: outboundSnapshots.id, reportDate: outboundSnapshots.reportDate, orderCount: outboundSnapshots.orderCount })
+      .from(outboundSnapshots)
+      .where(isNotNull(outboundSnapshots.completedAt)),
+    db
+      .select({ id: inventorySnapshots.id, reportDate: inventorySnapshots.reportDate, positionCount: inventorySnapshots.positionCount })
+      .from(inventorySnapshots)
+      .where(isNotNull(inventorySnapshots.completedAt)),
+  ]);
+  const po = newestFirst(poRows);
+  const out = newestFirst(outRows);
+  const inv = newestFirst(invRows);
+
+  const positions = inv.length
+    ? await db
+        .select({ snapshotId: inventoryPositions.snapshotId, partNumber: inventoryPositions.partNumber, branch: inventoryPositions.branch, available: inventoryPositions.available })
+        .from(inventoryPositions)
+        .where(inArray(inventoryPositions.snapshotId, inv.map((s) => s.id)))
+    : [];
+  const available = new Map(inv.map((s) => [s.id, availableBySite(positions.filter((p) => p.snapshotId === s.id))]));
+
+  const [poCounts, outSummaries] = await Promise.all([
+    Promise.all(po.map((i) => progressCounts(db, i.id))),
+    Promise.all(out.map((s, i) => (out[i + 1] ? changeSummary(db, s.id) : null))),
+  ]);
+
+  const dates = [...new Set([...po, ...out, ...inv].map((r) => r.reportDate))].sort().reverse().slice(0, HISTORY_REPORTS);
+  const rows: ImportHistoryRow[] = dates.map((reportDate) => {
+    const pi = po.findIndex((r) => r.reportDate === reportDate);
+    const oi = out.findIndex((r) => r.reportDate === reportDate);
+    const ii = inv.findIndex((r) => r.reportDate === reportDate);
+    let inventory: ImportHistoryRow['inventory'] = null;
+    if (ii >= 0) {
+      const now = available.get(inv[ii].id)!;
+      const before = inv[ii + 1] ? available.get(inv[ii + 1].id)! : null;
+      let up = 0;
+      let down = 0;
+      if (before) {
+        for (const key of new Set([...now.keys(), ...before.keys()])) {
+          const d = (now.get(key) ?? 0) - (before.get(key) ?? 0);
+          if (d > 0) up++;
+          else if (d < 0) down++;
+        }
+      }
+      inventory = { snapshotId: inv[ii].id, positionCount: inv[ii].positionCount, up: before ? up : null, down: before ? down : null };
+    }
+    return {
+      reportDate,
+      inbound: pi >= 0 ? { importId: po[pi].id, fileName: po[pi].fileName, counts: poCounts[pi] } : null,
+      outbound: oi >= 0 ? { snapshotId: out[oi].id, orderCount: out[oi].orderCount, summary: outSummaries[oi] } : null,
+      inventory,
+    };
+  });
   return c.json(rows);
 });
 

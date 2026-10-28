@@ -1,8 +1,9 @@
 import { and, eq, getTableColumns, isNotNull, isNull, ne, or } from 'drizzle-orm';
+import { orderLineKey } from '../shared/orderChanges';
 import { checkSupply, siteOf, type SupplyCheck } from '../shared/supply';
-import type { OutboundOrderInput, Shipment } from '../shared/types';
+import type { OrderChangeRow, OutboundOrderInput, Shipment } from '../shared/types';
 import type { Db } from './db/client';
-import { inventoryPositions, outboundOrders, palletRatios, shipments, suppliers } from './db/schema';
+import { inventoryPositions, outboundChanges, outboundOrders, palletRatios, shipments, suppliers } from './db/schema';
 import { currentInventory } from './inventory';
 import { currentSnapshot } from './outbound';
 import { expectedArrival } from './reports';
@@ -19,7 +20,7 @@ export async function loadSupply(db: Db, branch: string | undefined) {
   const [outbound, inventory] = await Promise.all([currentSnapshot(db), currentInventory(db)]);
   const { snapshotId: _s, ...orderColumns } = getTableColumns(outboundOrders);
   const site = branch && branch !== NO_BRANCH ? siteOf(branch) : null;
-  const [orderRows, positions, inboundRows] = await Promise.all([
+  const [orderRows, positions, inboundRows, changeRows] = await Promise.all([
     outbound
       ? db
           .select({ ...orderColumns, itemName: palletRatios.itemName })
@@ -38,7 +39,16 @@ export async function loadSupply(db: Db, branch: string | undefined) {
       .from(shipments)
       .innerJoin(suppliers, eq(suppliers.id, shipments.supplierId))
       .where(and(isNull(shipments.actualArrivalDate), or(isNull(shipments.poStatus), ne(shipments.poStatus, 'closed')), isNotNull(shipments.partNumber))),
+    outbound ? db.select().from(outboundChanges).where(eq(outboundChanges.snapshotId, outbound.id)) : [],
   ]);
+  // What changed on each SO# + CPN since the previous report.
+  const changes = new Map<string, OrderChangeRow[]>();
+  for (const ch of changeRows) {
+    const key = orderLineKey(ch.soNumber, ch.cpn);
+    const list = changes.get(key) ?? [];
+    list.push({ kind: ch.kind, from: ch.fromValue, to: ch.toValue, causes: ch.causes });
+    changes.set(key, list);
+  }
   const orders = orderRows as LoadedOrder[];
   const inSite = (b: string | null) => !branch || (site ? siteOf(b) === site : !b);
   const stock = positions.filter((p) => inSite(p.branch));
@@ -46,5 +56,5 @@ export async function loadSupply(db: Db, branch: string | undefined) {
   const check: SupplyCheck | null = inventory
     ? checkSupply(stock, orders, inbound.map((s) => ({ id: s.id, partNumber: s.partNumber, branch: s.branch, quantity: s.quantity, eta: expectedArrival(s), shipDate: s.shipDate })))
     : null;
-  return { outbound, inventory, orders, inbound, positions: stock, check };
+  return { outbound, inventory, orders, inbound, positions: stock, check, changes };
 }

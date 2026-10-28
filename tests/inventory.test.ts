@@ -152,6 +152,7 @@ const position = (over: Partial<InventoryPositionInput>): InventoryPositionInput
 });
 const order = (over: Partial<OutboundOrderInput>): OutboundOrderInput => ({
   soNumber: '1',
+  originalRequestDate: null,
   emsPo: null,
   status: 'On order',
   warehouse: 'JIT-MSUS-META',

@@ -15,6 +15,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import type { OrderChangeCause, OrderChangeKind } from '../../shared/orderChanges';
 import type { RatioSource, RatioValues } from '../../shared/pallets';
 import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping, type LineChangeKind, type RegistrationState } from '../../shared/types';
 
@@ -313,7 +314,10 @@ export const outboundOrders = pgTable('outbound_orders', {
   shipDateSource: text('ship_date_source').$type<'confirmed' | 'scheduled'>(),
   scheduledShipDate: date('scheduled_ship_date'),
   confirmedShipDate: date('confirmed_ship_date'),
+  /** EMS Requested Dock Date: when the customer wants it. */
   dockDate: date('dock_date'),
+  /** The report's "Origianl Requested Date". */
+  originalRequestDate: date('original_request_date'),
   poReceiptDate: date('po_receipt_date'),
 }, (t) => [
   index('outbound_orders_ship_date_idx').on(t.snapshotId, t.shipDate),
@@ -351,3 +355,38 @@ export const inventoryPositions = pgTable('inventory_positions', {
   oldestReceiptDate: date('oldest_receipt_date'),
   sourceRows: integer('source_rows').notNull().default(1),
 }, (t) => [uniqueIndex('inventory_positions_part_idx').on(t.snapshotId, t.partNumber, t.branch)]);
+
+/**
+ * What changed on one sales order line (SO# + CPN) in a snapshot compared with the previous one.
+ * Recomputed when a snapshot completes, and for the next newer one, so out-of-order imports stay right.
+ */
+export const outboundChanges = pgTable('outbound_changes', {
+  id: serial('id').primaryKey(),
+  snapshotId: integer('snapshot_id').notNull().references(() => outboundSnapshots.id, { onDelete: 'cascade' }),
+  reportDate: date('report_date').notNull(),
+  previousReportDate: date('previous_report_date').notNull(),
+  soNumber: text('so_number').notNull(),
+  cpn: text('cpn'),
+  shipTo: text('ship_to'),
+  warehouse: text('warehouse'),
+  kind: text('kind').$type<OrderChangeKind>().notNull(),
+  fromValue: text('from_value'),
+  toValue: text('to_value'),
+  causes: jsonb('causes').$type<OrderChangeCause[]>().notNull().default([]),
+}, (t) => [
+  index('outbound_changes_line_idx').on(t.soNumber, t.cpn),
+  index('outbound_changes_snapshot_idx').on(t.snapshotId),
+]);
+
+/** A team note on why an order line changed. Keyed by line, report date and kind so it survives a re-import. */
+export const orderChangeNotes = pgTable('order_change_notes', {
+  id: serial('id').primaryKey(),
+  soNumber: text('so_number').notNull(),
+  cpn: text('cpn'),
+  reportDate: date('report_date').notNull(),
+  kind: text('kind').$type<OrderChangeKind>().notNull(),
+  note: text('note').notNull(),
+  createdBy: text('created_by').notNull(),
+  createdByLabel: text('created_by_label'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index('order_change_notes_line_idx').on(t.soNumber, t.cpn)]);

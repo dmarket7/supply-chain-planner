@@ -19,7 +19,7 @@ export function expectedArrival(s: Pick<Shipment, 'estimatedArrivalDate' | 'prom
 }
 
 /** Adds each line's pallet conversion. */
-export function withPallets(shipments: Shipment[], ratios: RatioLookup): InboundShipment[] {
+export function withPallets<T extends Pick<Shipment, 'partNumber' | 'commodity' | 'quantity'>>(shipments: T[], ratios: RatioLookup): (T & Pick<InboundShipment, 'pallets'>)[] {
   return shipments.map((s) => ({ ...s, pallets: ratios.line(s.partNumber, s.commodity, s.quantity) }));
 }
 

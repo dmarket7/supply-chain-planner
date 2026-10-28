@@ -245,15 +245,15 @@ describe('outbound page', () => {
     const { OutboundPage } = await import('../src/features/outbound/OutboundPage');
     const today = todayIso();
     const lookup = new RatioLookup([{ partNumber: 'A', unitsPerPallet: 100, palletsPerTruck: 26, productGroup: 'SSD', source: 'file' }]);
-    const base = { emsPo: null, status: 'Reserved Physical', warehouse: null, manufacturer: null, packagingType: null, totalPrice: null, sourceRows: 1, shipDateSource: 'confirmed' as const, scheduledShipDate: null, confirmedShipDate: null, dockDate: null, poReceiptDate: null, itemName: null };
+    const base = { emsPo: null, status: 'Reserved Physical', warehouse: null, manufacturer: null, packagingType: null, totalPrice: null, sourceRows: 1, shipDateSource: 'confirmed' as const, scheduledShipDate: null, confirmedShipDate: null, dockDate: null, originalRequestDate: null, poReceiptDate: null, itemName: null };
     const orders = [
       { ...base, id: 1, soNumber: '1', shipTo: 'CELESTICA LLC-RICHARDSON', cpn: 'A', mpn: 'MPN-A', businessGroup: 'SSD', quantity: 1300, shipDate: addDays(today, 1) },
       { ...base, id: 2, soNumber: '2', shipTo: 'CELESTICA LLC-RICHARDSON', cpn: 'B', mpn: 'MPN-B', businessGroup: 'SSD', quantity: 1300, shipDate: addDays(today, 1) },
-    ].map((o) => ({ ...o, pallets: lookup.line(o.cpn, o.businessGroup, o.quantity), supply: null }));
+    ].map((o) => ({ ...o, pallets: lookup.line(o.cpn, o.businessGroup, o.quantity), supply: null, changes: [] }));
     const data: OutboundResponse = {
       from: '',
       to: '',
-      snapshot: { id: 1, fileName: 'r.xlsx', reportDate: '2026-10-18', rowCount: 3, orderCount: 2, skippedQuotations: 1, changes: { previousReportDate: '2026-10-10', noLongerListed: 928, added: 350, quantityChanged: 26 } },
+      snapshot: { id: 1, fileName: 'r.xlsx', reportDate: '2026-10-18', rowCount: 3, orderCount: 2, skippedQuotations: 1, changes: { previousReportDate: '2026-10-10', noLongerListed: 928, added: 350, quantityChanged: 26, summary: { added: 350, gone: 928, pushedOut: 0, pulledIn: 0, newlyConfirmed: 0, dockMoved: 0, quantity: 26, status: 0, noCause: 0 } } },
       inventoryReportDate: null,
       ...outboundReport(orders, addDays(today, -7), addDays(today, 28), today),
     };
@@ -297,6 +297,7 @@ describe('dashboard and inventory pages', () => {
       inbound: [],
       positions,
       check: checkSupply(positions, orders, []),
+      changes: new Map(),
     } as unknown as Parameters<typeof dashboard>[0];
     return { today, supply, dash: dashboard(supply, ratios, today, today), parts: supplyParts(supply) };
   }

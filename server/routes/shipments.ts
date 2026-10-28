@@ -5,6 +5,8 @@ import { SHIPMENT_STATUSES, type ShipmentDetail } from '../../shared/types';
 import { getDb } from '../db/client';
 import { lineChanges, promisedDateHistory, shipments, suppliers, trackingEvents } from '../db/schema';
 import type { AppEnv } from '../env';
+import { loadRatioLookup } from '../palletRatios';
+import { withPallets } from '../reports';
 import { getProviders } from '../tracking/registry';
 import { attachTracking } from '../tracking/routing';
 import { branchFilter, shipmentColumns } from './common';
@@ -41,14 +43,17 @@ shipmentsRoutes.get('/', async (c) => {
   }
 
   const db = getDb(c.env.DATABASE_URL);
-  const rows = await db
-    .select(shipmentColumns)
-    .from(shipments)
-    .innerJoin(suppliers, eq(suppliers.id, shipments.supplierId))
-    .where(and(...filters))
-    .orderBy(sql`${expectedDate} asc nulls last`, asc(shipments.id))
-    .limit(10000);
-  return c.json(await attachTracking(db, getProviders(c.env), rows));
+  const [rows, ratios] = await Promise.all([
+    db
+      .select(shipmentColumns)
+      .from(shipments)
+      .innerJoin(suppliers, eq(suppliers.id, shipments.supplierId))
+      .where(and(...filters))
+      .orderBy(sql`${expectedDate} asc nulls last`, asc(shipments.id))
+      .limit(10000),
+    loadRatioLookup(db),
+  ]);
+  return c.json(withPallets(await attachTracking(db, getProviders(c.env), rows), ratios));
 });
 
 shipmentsRoutes.get('/:id', async (c) => {

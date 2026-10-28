@@ -1,3 +1,4 @@
+import { ORDER_CHANGE_KINDS, type OrderChangeCause, type OrderChangeKind, type OrderChangeSummary, type OrderLineState } from './orderChanges';
 import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues, TruckSummary } from './pallets';
 import type { ProgressCounts } from './progress';
 import type { OrderSupply, PartSupply, Readiness } from './supply';
@@ -521,6 +522,8 @@ export const outboundOrderInputSchema = z.object({
   scheduledShipDate: nullableDate,
   confirmedShipDate: nullableDate,
   dockDate: nullableDate,
+  /** Older clients don't send it. */
+  originalRequestDate: nullableDate.default(null),
   poReceiptDate: nullableDate,
 });
 export type OutboundOrderInput = z.infer<typeof outboundOrderInputSchema>;
@@ -544,6 +547,8 @@ export interface OutboundChanges {
   noLongerListed: number;
   added: number;
   quantityChanged: number;
+  /** Per SO# + CPN, from the stored changes. */
+  summary: OrderChangeSummary;
 }
 
 export interface OutboundSnapshotInfo {
@@ -563,6 +568,52 @@ export interface OutboundOrder extends OutboundOrderInput {
   pallets: LinePallets;
   /** Null until an Inventory Summary has been imported. */
   supply: OrderSupply | null;
+  /** What changed on this SO# + CPN since the previous report. */
+  changes: OrderChangeRow[];
+}
+
+export interface OrderChangeRow {
+  kind: OrderChangeKind;
+  from: string | null;
+  to: string | null;
+  causes: OrderChangeCause[];
+}
+
+export interface OrderNote {
+  id: number;
+  reportDate: string;
+  kind: OrderChangeKind;
+  note: string;
+  author: string;
+  createdAt: string;
+  mine: boolean;
+}
+
+export const orderNoteSchema = z.object({
+  soNumber: z.string().min(1),
+  cpn: z.string().nullable(),
+  reportDate: isoDate,
+  kind: z.enum(ORDER_CHANGE_KINDS),
+  note: z.string().trim().min(1).max(1000),
+});
+
+/** One SO# + CPN across every kept report. */
+export interface OrderHistoryResponse {
+  soNumber: string;
+  cpn: string | null;
+  /** Oldest first; `line` is null when the report didn't list it. */
+  reports: { reportDate: string; line: OrderLineState | null }[];
+  changes: (OrderChangeRow & { reportDate: string; previousReportDate: string })[];
+  notes: OrderNote[];
+}
+
+/** One report date on the Import page's history. */
+export interface ImportHistoryRow {
+  reportDate: string;
+  inbound: { importId: number; fileName: string; counts: ProgressCounts } | null;
+  outbound: { snapshotId: number; orderCount: number; summary: OrderChangeSummary | null } | null;
+  /** Parts per site whose available stock went up or down since the previous inventory; null for the first. */
+  inventory: { snapshotId: number; positionCount: number; up: number | null; down: number | null } | null;
 }
 
 export interface ReadinessTotals {
@@ -695,6 +746,8 @@ export interface SupplyInboundRow {
 
 export interface SupplyPartRow extends PartSupply {
   mpn: string | null;
+  /** Available now minus at the previous inventory report; null when there is none. */
+  availableChange: number | null;
   orderRows: SupplyOrderRow[];
   inbound: SupplyInboundRow[];
 }
