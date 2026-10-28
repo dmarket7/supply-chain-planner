@@ -399,8 +399,8 @@ describe('import history', () => {
     const summary = { added: 3, gone: 2, pushedOut: 155, pulledIn: 125, newlyConfirmed: 0, dockMoved: 154, quantity: 13, status: 0, noCause: 114 };
     const counts = { shipped: 4, arrived: 5, eta_moved: 6, tracking: 0, new_order: 7, reopened: 0 };
     const rows: ImportHistoryRow[] = [
-      { reportDate: '2026-10-18', inbound: { importId: 2, fileName: 'b', counts }, outbound: { snapshotId: 2, orderCount: 10, summary }, inventory: { snapshotId: 2, positionCount: 9, up: 8, down: 1 } },
-      { reportDate: '2026-10-10', inbound: { importId: 1, fileName: 'a', counts }, outbound: { snapshotId: 1, orderCount: 9, summary: null }, inventory: null },
+      { reportDate: '2026-10-18', inbound: { importId: 2, fileName: 'b', counts, linesStored: true }, outbound: { snapshotId: 2, orderCount: 10, summary }, inventory: { snapshotId: 2, positionCount: 9, up: 8, down: 1 } },
+      { reportDate: '2026-10-10', inbound: { importId: 1, fileName: 'a', counts, linesStored: false }, outbound: { snapshotId: 1, orderCount: 9, summary: null }, inventory: null },
     ];
     const html = render(h(ImportHistory), [[['import-history'], rows]]);
     expect(html).toContain('/outbound?changed=pushed');
@@ -409,6 +409,8 @@ describe('import history', () => {
     expect(html).toMatch(/114(<!-- -->)? date moves with no cause/);
     expect(html).toContain('first report');
     expect(html.match(/href="\/inbound\?changed=eta_moved"/g)).toHaveLength(1); // only the newest row links
+    expect(html).toContain('imported before reports could be added out of order');
+    expect(html).toContain('Delete…');
   });
 });
 

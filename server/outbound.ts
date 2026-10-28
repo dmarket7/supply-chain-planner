@@ -114,19 +114,24 @@ async function computeChanges(db: Db, s: Snapshot): Promise<void> {
   }
 }
 
+/** After deleting a report date: the next newer snapshot now compares with an earlier one. */
+export async function recomputeChangesAfter(db: Db, reportDate: string): Promise<void> {
+  const [next] = await db
+    .select()
+    .from(outboundSnapshots)
+    .where(and(isNotNull(outboundSnapshots.completedAt), gt(outboundSnapshots.reportDate, reportDate)))
+    .orderBy(asc(outboundSnapshots.reportDate), desc(outboundSnapshots.id))
+    .limit(1);
+  if (next) await computeChanges(db, next);
+}
+
 /**
  * Recomputes the changes of a just-completed snapshot and of the next newer one, whose "previous"
  * may now be this one (an older report imported late).
  */
 export async function recomputeChanges(db: Db, s: Snapshot): Promise<void> {
   await computeChanges(db, s);
-  const [next] = await db
-    .select()
-    .from(outboundSnapshots)
-    .where(and(isNotNull(outboundSnapshots.completedAt), gt(outboundSnapshots.reportDate, s.reportDate)))
-    .orderBy(asc(outboundSnapshots.reportDate), desc(outboundSnapshots.id))
-    .limit(1);
-  if (next) await computeChanges(db, next);
+  await recomputeChangesAfter(db, s.reportDate);
 }
 
 export async function snapshotInfo(db: Db, s: Snapshot): Promise<OutboundSnapshotInfo> {

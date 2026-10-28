@@ -98,6 +98,8 @@ export interface ImportResult {
   /** Lines per kind of progress since the previous report. */
   progress: ProgressCounts;
   previousReportDate: string | null;
+  /** An older report (or a same-date re-upload): the client rebuilds the PO history next. */
+  needsRebuild: boolean;
 }
 
 /** Target fields a spreadsheet column can be mapped to. */
@@ -610,7 +612,8 @@ export interface OrderHistoryResponse {
 /** One report date on the Import page's history. */
 export interface ImportHistoryRow {
   reportDate: string;
-  inbound: { importId: number; fileName: string; counts: ProgressCounts } | null;
+  /** `linesStored` false: imported before reports could be added out of order, so it can't be replayed. */
+  inbound: { importId: number; fileName: string; counts: ProgressCounts; linesStored: boolean } | null;
   outbound: { snapshotId: number; orderCount: number; summary: OrderChangeSummary | null } | null;
   /** Parts per site whose available stock went up or down since the previous inventory; null for the first. */
   inventory: { snapshotId: number; positionCount: number; up: number | null; down: number | null } | null;

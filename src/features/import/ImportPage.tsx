@@ -26,6 +26,7 @@ import { findInventorySheet, parseInventorySummary, type ParsedInventory } from 
 import { findOdmSheet, parseOdmOrders, type ParsedOdmOrders } from './parseOdmOrders';
 import { headerSignature, parseSheet, readWorkbook, type ParsedSheet } from './parseWorkbook';
 import { ImportHistory } from './ImportHistory';
+import { rebuildPoHistory } from './rebuildHistory';
 import { uploadChunked } from './uploadChunked';
 
 /** The tab that holds inbound PO lines in the Meerkat report; other reports fall back to the first sheet. */
@@ -205,6 +206,10 @@ export function ImportPage() {
         size: IMPORT_CHUNK_SIZE,
         onProgress: progress,
       });
+      if (result.needsRebuild) {
+        await rebuildPoHistory(progress);
+        return `Saved as of ${formatDate(reportDate)}. A report as new or newer was already imported, so the inbound history was rebuilt from every report in date order.`;
+      }
       return poResultText(result);
     },
     outbound: async (progress) => {
@@ -274,7 +279,7 @@ export function ImportPage() {
     <div className="space-y-6">
       <PageHeader
         title="Import report"
-        description="Upload the weekly Meerkat inventory report (.xlsx). It's read in your browser, and one button saves the Supplier POs, ODM Open Order and Inventory Summary tabs. Import weekly reports oldest first."
+        description="Upload the weekly Meerkat inventory report (.xlsx). It's read in your browser, and one button saves the Supplier POs, ODM Open Order and Inventory Summary tabs. Set the report date to the date the report was run; reports can be imported in any order, and each one adds to the change history."
       />
 
       <Card>

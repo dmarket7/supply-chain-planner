@@ -50,7 +50,30 @@ export const imports = pgTable('imports', {
   newlyClosed: integer('newly_closed').notNull().default(0),
   removedAwaiting: integer('removed_awaiting').notNull().default(0),
   mappingId: integer('mapping_id').references(() => columnMappings.id, { onDelete: 'set null' }),
+  /** The report's rows are kept (po_report_lines), so the PO history can be rebuilt from it. */
+  linesStored: boolean('lines_stored').notNull().default(false),
+  /** Set when the report is deleted; the row goes once the history has been rebuilt without it. */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
+
+/**
+ * One version of one PO line as a report listed it. A line that doesn't change between reports
+ * keeps one version, so keeping every report stays small.
+ */
+export const poLineVersions = pgTable('po_line_versions', {
+  id: serial('id').primaryKey(),
+  dedupeKey: text('dedupe_key').notNull(),
+  /** PO number (or the line's key when it has none): lines of one PO are replayed together. */
+  groupKey: text('group_key').notNull(),
+  hash: text('hash').notNull(),
+  data: jsonb('data').notNull(),
+}, (t) => [uniqueIndex('po_line_versions_key_idx').on(t.dedupeKey, t.hash), index('po_line_versions_group_idx').on(t.groupKey)]);
+
+/** Which line versions each Supplier PO report listed. */
+export const poReportLines = pgTable('po_report_lines', {
+  importId: integer('import_id').notNull().references(() => imports.id, { onDelete: 'cascade' }),
+  versionId: integer('version_id').notNull().references(() => poLineVersions.id, { onDelete: 'cascade' }),
+}, (t) => [primaryKey({ columns: [t.importId, t.versionId] }), index('po_report_lines_version_idx').on(t.versionId)]);
 
 export const suppliers = pgTable('suppliers', {
   id: serial('id').primaryKey(),

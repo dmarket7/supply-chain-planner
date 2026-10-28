@@ -1,12 +1,15 @@
 import { Hono } from 'hono';
-import { and, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { baseDedupeKey } from '../../shared/importKeys';
 import { importRowsSchema, startImportSchema, type ImportHistoryRow, type ImportResult } from '../../shared/types';
 import { getDb } from '../db/client';
 import { imports, inventoryPositions, inventorySnapshots, lineChanges, outboundSnapshots, promisedDateHistory, shipments, suppliers } from '../db/schema';
+import type { Db } from '../db/client';
 import type { AppEnv } from '../env';
 import { availableBySite } from '../inventory';
-import { changeSummary } from '../outbound';
+import { changeSummary, recomputeChangesAfter } from '../outbound';
+import { activeImport, finishRebuild, legacyReportDates, rebuildGroups, startRebuild, storeReportLines, upsertShipments } from '../poHistory';
 import { planImport, poLineKey } from '../importPlan';
 import { progressCounts } from '../progress';
 import { chunk } from './common';
@@ -36,7 +39,7 @@ importsRoutes.get('/history', async (c) => {
     return [...byDate.values()].sort((a, b) => b.reportDate.localeCompare(a.reportDate)).slice(0, HISTORY_REPORTS + 1);
   };
   const [poRows, outRows, invRows] = await Promise.all([
-    db.select({ id: imports.id, reportDate: imports.reportDate, fileName: imports.fileName }).from(imports).where(isNotNull(imports.completedAt)),
+    db.select({ id: imports.id, reportDate: imports.reportDate, fileName: imports.fileName, linesStored: imports.linesStored }).from(imports).where(activeImport),
     db
       .select({ id: outboundSnapshots.id, reportDate: outboundSnapshots.reportDate, orderCount: outboundSnapshots.orderCount })
       .from(outboundSnapshots)
@@ -85,7 +88,7 @@ importsRoutes.get('/history', async (c) => {
     }
     return {
       reportDate,
-      inbound: pi >= 0 ? { importId: po[pi].id, fileName: po[pi].fileName, counts: poCounts[pi] } : null,
+      inbound: pi >= 0 ? { importId: po[pi].id, fileName: po[pi].fileName, counts: poCounts[pi], linesStored: po[pi].linesStored } : null,
       outbound: oi >= 0 ? { snapshotId: out[oi].id, orderCount: out[oi].orderCount, summary: outSummaries[oi] } : null,
       inventory,
     };
@@ -93,28 +96,32 @@ importsRoutes.get('/history', async (c) => {
   return c.json(rows);
 });
 
+/** True when no other kept report is as new as `reportDate`: its rows can be merged straight in. */
+async function isNewest(db: Db, reportDate: string, exceptId?: number): Promise<boolean> {
+  const [newer] = await db
+    .select({ id: imports.id })
+    .from(imports)
+    .where(and(activeImport, gte(imports.reportDate, reportDate), exceptId === undefined ? undefined : ne(imports.id, exceptId)))
+    .limit(1);
+  return !newer;
+}
+
+const legacyMessage = (dates: string[]) =>
+  `The reports of ${dates.join(', ')} were imported before older reports could be added, so the history can't be rebuilt with them. Delete them under Import history, then import the reports again, oldest first.`;
+
 /**
- * Step 1: create the import. Reports must be imported oldest first, because arrival windows are
- * measured from the previous report's date.
+ * Step 1: create the import. The newest report is merged into the current lines as it uploads; an
+ * older one, or a re-upload of the same date, is kept and the history rebuilt once it completes.
  */
 importsRoutes.post('/', async (c) => {
   const parsed = startImportSchema.safeParse(await c.req.json());
   if (!parsed.success) return c.json({ error: 'Invalid import', issues: parsed.error.issues }, 400);
   const db = getDb(c.env.DATABASE_URL);
 
-  const [latest] = await db
-    .select({ reportDate: imports.reportDate })
-    .from(imports)
-    .where(isNotNull(imports.completedAt))
-    .orderBy(desc(imports.reportDate))
-    .limit(1);
-  if (latest && parsed.data.reportDate < latest.reportDate) {
-    return c.json(
-      {
-        error: `A newer report (${latest.reportDate}) has already been imported. Import reports oldest first.`,
-      },
-      409,
-    );
+  const rebuild = !(await isNewest(db, parsed.data.reportDate));
+  if (rebuild) {
+    const legacy = await legacyReportDates(db);
+    if (legacy.length) return c.json({ error: legacyMessage(legacy) }, 409);
   }
 
   const [row] = await db
@@ -126,9 +133,10 @@ importsRoutes.post('/', async (c) => {
       mappingId: parsed.data.mappingId ?? null,
       rowCount: parsed.data.rowCount,
       uploadedBy: c.get('userId'),
+      linesStored: true,
     })
     .returning({ id: imports.id });
-  return c.json({ importId: row.id }, 201);
+  return c.json({ importId: row.id, rebuild }, 201);
 });
 
 /** Step 2: upsert one chunk of rows (≤ IMPORT_CHUNK_SIZE). */
@@ -144,6 +152,10 @@ importsRoutes.post('/:id/rows', async (c) => {
   const [imp] = await db.select().from(imports).where(eq(imports.id, importId));
   if (!imp) return c.json({ error: 'Import not found' }, 404);
   if (imp.completedAt) return c.json({ error: 'Import already completed' }, 409);
+
+  await storeReportLines(db, importId, rows);
+  // An older report only needs keeping; the rebuild after it completes replays it in date order.
+  if (!(await isNewest(db, imp.reportDate, importId))) return c.json({ inserted: 0, updated: 0 });
 
   // Suppliers: create any new ones, then look up ids.
   const supplierNames = [...new Set(rows.map((r) => r.supplier))];
@@ -183,76 +195,10 @@ importsRoutes.post('/:id/rows', async (c) => {
 
   const plan = planImport(rows, existing, imp.reportDate, awaitingPoLines);
 
-  const upsert = db
-    .insert(shipments)
-    .values(
-      plan.rows.map((r) => ({
-        dedupeKey: r.dedupeKey,
-        supplierId: supplierIds.get(r.supplier)!,
-        poNumber: r.poNumber ?? null,
-        lineRef: r.lineRef ?? null,
-        asn: r.asn ?? null,
-        poStatus: r.poStatus ?? null,
-        customerPo: r.customerPo ?? null,
-        partNumber: r.partNumber ?? null,
-        itemDescription: r.itemDescription ?? null,
-        commodity: r.commodity ?? null,
-        branch: r.branch ?? null,
-        warehouse: r.warehouse ?? null,
-        quantity: r.quantity ?? null,
-        carrier: r.carrier ?? null,
-        mode: r.mode ?? null,
-        trackingNumber: r.trackingNumber ?? null,
-        trackingRef: r.trackingRef ?? null,
-        requestDate: r.requestDate ?? null,
-        shipDate: r.shipDate ?? null,
-        promisedArrivalDate: r.promisedArrivalDate,
-        actualArrivalDate: r.actualArrivalDate,
-        arrivalSource: r.arrivalSource,
-        arrivalWindowStart: r.arrivalWindowStart,
-        arrivalWindowEnd: r.arrivalWindowEnd,
-        lastSeenOpenReportDate: r.lastSeenOpenReportDate,
-        status: r.status,
-        sourceRow: r.sourceRow ?? null,
-        firstImportId: importId,
-        lastImportId: importId,
-      })),
-    )
-    .onConflictDoUpdate({
-      target: shipments.dedupeKey,
-      // planRow already merged the previous state, so the incoming values win, except carrier/mode,
-      // which a later report may leave blank.
-      set: {
-        supplierId: sql`excluded.supplier_id`,
-        poNumber: sql`excluded.po_number`,
-        lineRef: sql`excluded.line_ref`,
-        asn: sql`excluded.asn`,
-        poStatus: sql`excluded.po_status`,
-        customerPo: sql`excluded.customer_po`,
-        partNumber: sql`excluded.part_number`,
-        itemDescription: sql`excluded.item_description`,
-        commodity: sql`excluded.commodity`,
-        branch: sql`excluded.branch`,
-        warehouse: sql`excluded.warehouse`,
-        quantity: sql`excluded.quantity`,
-        carrier: sql`coalesce(excluded.carrier, ${shipments.carrier})`,
-        mode: sql`coalesce(excluded.mode, ${shipments.mode})`,
-        trackingNumber: sql`excluded.tracking_number`,
-        trackingRef: sql`excluded.tracking_ref`,
-        requestDate: sql`excluded.request_date`,
-        shipDate: sql`excluded.ship_date`,
-        promisedArrivalDate: sql`excluded.promised_arrival_date`,
-        actualArrivalDate: sql`excluded.actual_arrival_date`,
-        arrivalSource: sql`excluded.arrival_source`,
-        arrivalWindowStart: sql`excluded.arrival_window_start`,
-        arrivalWindowEnd: sql`excluded.arrival_window_end`,
-        lastSeenOpenReportDate: sql`excluded.last_seen_open_report_date`,
-        status: sql`excluded.status`,
-        sourceRow: sql`excluded.source_row`,
-        lastImportId: sql`excluded.last_import_id`,
-        updatedAt: sql`now()`,
-      },
-    });
+  const upsert = upsertShipments(
+    db,
+    plan.rows.map((r) => ({ ...r, supplierId: supplierIds.get(r.supplier)!, firstImportId: importId, lastImportId: importId })),
+  );
 
   const idByKey = new Map(existing.map((e) => [e.dedupeKey, e.id]));
   const history = plan.promisedDateChanges.map((ch) => ({
@@ -302,7 +248,15 @@ importsRoutes.post('/:id/complete', async (c) => {
   const [imp] = await db.select().from(imports).where(eq(imports.id, importId));
   if (!imp) return c.json({ error: 'Import not found' }, 404);
 
-  if (!imp.completedAt) {
+  let needsRebuild = false;
+  if (!imp.completedAt && !(await isNewest(db, imp.reportDate, importId))) {
+    // Older than a kept report, or the same date: it replaces that date's upload, then the client rebuilds.
+    await db.batch([
+      db.update(imports).set({ deletedAt: new Date() }).where(and(activeImport, eq(imports.reportDate, imp.reportDate), ne(imports.id, importId))),
+      db.update(imports).set({ completedAt: new Date() }).where(eq(imports.id, importId)),
+    ]);
+    needsRebuild = true;
+  } else if (!imp.completedAt) {
     const stale = and(eq(shipments.status, 'awaiting_shipment'), ne(shipments.lastImportId, importId));
     // Before dropping an awaiting line that has shipped, copy its history (e.g. "first listed") onto the
     // line(s) now listed under an ASN for the same PO line, so the timeline starts at the order.
@@ -331,7 +285,7 @@ importsRoutes.post('/:id/complete', async (c) => {
     db
       .select({ reportDate: imports.reportDate })
       .from(imports)
-      .where(and(isNotNull(imports.completedAt), lt(imports.reportDate, imp.reportDate)))
+      .where(and(activeImport, lt(imports.reportDate, imp.reportDate)))
       .orderBy(desc(imports.reportDate))
       .limit(1),
     progressCounts(db, importId),
@@ -346,6 +300,49 @@ importsRoutes.post('/:id/complete', async (c) => {
     removedAwaiting: imp.removedAwaiting,
     progress,
     previousReportDate: previous?.reportDate ?? null,
+    needsRebuild,
   };
   return c.json(result);
+});
+
+/**
+ * Rebuilding the PO history replays every kept report, oldest first, a few POs per request so each
+ * stays inside the Workers CPU budget: start, then each batch, then finish.
+ */
+importsRoutes.post('/rebuild', async (c) => {
+  const db = getDb(c.env.DATABASE_URL);
+  const legacy = await legacyReportDates(db);
+  if (legacy.length) return c.json({ error: legacyMessage(legacy) }, 409);
+  return c.json({ batches: await startRebuild(db) });
+});
+
+importsRoutes.post('/rebuild/batch', async (c) => {
+  const parsed = z.object({ groups: z.array(z.string()).min(1).max(2000) }).safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: 'Invalid batch' }, 400);
+  const db = getDb(c.env.DATABASE_URL);
+  await rebuildGroups(db, parsed.data.groups);
+  return c.json({ ok: true });
+});
+
+importsRoutes.post('/rebuild/finish', async (c) => {
+  await finishRebuild(getDb(c.env.DATABASE_URL));
+  return c.json({ ok: true });
+});
+
+/**
+ * Deletes everything imported as of one report date: the Supplier PO report (the client then
+ * rebuilds the PO history without it), the ODM Open Order snapshot and the Inventory Summary.
+ */
+importsRoutes.post('/delete', async (c) => {
+  const parsed = z.object({ reportDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: 'Invalid report date' }, 400);
+  const { reportDate } = parsed.data;
+  const db = getDb(c.env.DATABASE_URL);
+  const [po, outbound, inventory] = await Promise.all([
+    db.update(imports).set({ deletedAt: new Date() }).where(and(eq(imports.reportDate, reportDate), isNotNull(imports.completedAt))).returning({ id: imports.id }),
+    db.delete(outboundSnapshots).where(eq(outboundSnapshots.reportDate, reportDate)).returning({ id: outboundSnapshots.id }),
+    db.delete(inventorySnapshots).where(eq(inventorySnapshots.reportDate, reportDate)).returning({ id: inventorySnapshots.id }),
+  ]);
+  if (outbound.length) await recomputeChangesAfter(db, reportDate);
+  return c.json({ purchaseOrders: po.length, outbound: outbound.length, inventory: inventory.length, needsRebuild: po.length > 0 });
 });

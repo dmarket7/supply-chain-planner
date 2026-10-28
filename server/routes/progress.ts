@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
-import { desc, isNotNull } from 'drizzle-orm';
+import { desc } from 'drizzle-orm';
 import type { ProgressSummary } from '../../shared/types';
 import { getDb } from '../db/client';
+import { activeImport } from '../poHistory';
 import { imports } from '../db/schema';
 import type { AppEnv } from '../env';
 import { progressCounts } from '../progress';
@@ -15,7 +16,7 @@ progressRoutes.get('/latest', async (c) => {
   const [latest, previous] = await db
     .select({ id: imports.id, reportDate: imports.reportDate, fileName: imports.fileName, removedAwaiting: imports.removedAwaiting })
     .from(imports)
-    .where(isNotNull(imports.completedAt))
+    .where(activeImport)
     .orderBy(desc(imports.reportDate), desc(imports.id))
     .limit(2);
   if (!latest) return c.json(null);
