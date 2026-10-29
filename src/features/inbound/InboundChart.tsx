@@ -1,4 +1,4 @@
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts';
 import type { InboundDay } from '../../../shared/types';
 import { EstimatedHatch, ESTIMATED_FILL, Legend, tooltipBoxCls, TooltipRow as Row } from '../../components/chart';
 import { formatDate, formatPallets } from '../../lib/format';
@@ -69,13 +69,15 @@ function tooltipFor(metric: Metric) {
               {pallets.noRatioLines} line{pallets.noRatioLines === 1 ? '' : 's'} with no ratio ({pallets.noRatioUnits.toLocaleString()} units)
             </div>
           )}
+          <div className="mt-1 text-xs text-slate-500">Click to list this day's lines</div>
         </div>
       </div>
     );
   };
 }
 
-export function InboundChart({ days, metric, onSelectDay }: { days: InboundDay[]; metric: Metric; onSelectDay?: (date: string) => void }) {
+/** Clicking a day (anywhere in its column) selects it; the other days dim. Clicking it again clears it. */
+export function InboundChart({ days, metric, selected = null, onSelectDay }: { days: InboundDay[]; metric: Metric; selected?: string | null; onSelectDay?: (date: string | null) => void }) {
   const data = toPoints(days);
   const series = SERIES[metric];
   const present = series.filter((s) => data.some((p) => (p[s.key] as number) > 0));
@@ -85,7 +87,16 @@ export function InboundChart({ days, metric, onSelectDay }: { days: InboundDay[]
       <EstimatedHatch />
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }} barCategoryGap="20%">
+          <BarChart
+            data={data}
+            margin={{ top: 8, right: 8, bottom: 0, left: -16 }}
+            barCategoryGap="20%"
+            style={onSelectDay ? { cursor: 'pointer' } : undefined}
+            onClick={(state) => {
+              const date = state?.activeLabel == null ? null : String(state.activeLabel);
+              if (date && onSelectDay) onSelectDay(date === selected ? null : date);
+            }}
+          >
             <CartesianGrid vertical={false} stroke="var(--grid)" />
             <XAxis
               dataKey="date"
@@ -107,9 +118,11 @@ export function InboundChart({ days, metric, onSelectDay }: { days: InboundDay[]
                 stroke="var(--surface)"
                 strokeWidth={2}
                 radius={i === present.length - 1 ? [4, 4, 0, 0] : 0}
-                cursor={onSelectDay ? 'pointer' : undefined}
-                onClick={(entry: { payload?: Point }) => entry.payload && onSelectDay?.(entry.payload.date)}
-              />
+              >
+                {data.map((p) => (
+                  <Cell key={p.date} fillOpacity={selected && selected !== p.date ? 0.35 : 1} />
+                ))}
+              </Bar>
             ))}
           </BarChart>
         </ResponsiveContainer>

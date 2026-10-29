@@ -207,7 +207,7 @@ export function DashboardPage() {
           >
             <OrderRows rows={ex.overdue.rows} />
           </Issue>
-          <Issue title="Late inbound" count={ex.lateInbound.count} summary="Expected date passed, not arrived" link={{ to: '/shipments', label: 'Shipments' }}>
+          <Issue title="Late inbound" count={ex.lateInbound.count} summary="Expected date passed, not arrived" link={{ to: '/inbound?late=1', label: 'Inbound' }}>
             {ex.lateInbound.rows.length ? (
               <table className={tableCls}>
                 <thead>

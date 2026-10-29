@@ -1,12 +1,13 @@
 import { Hono } from 'hono';
-import { and, asc, desc, eq, gte, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { addDays, todayIso } from '../../shared/dates';
 import type { ArrivalsResponse, InboundResponse, OutboundResponse, Shipment, SupplyResponse } from '../../shared/types';
 import { getDb } from '../db/client';
+import { activeImport } from '../poHistory';
 import { dashboard, supplyParts, withSupply } from '../dashboard';
 import { imports, promisedDateHistory, shipments, suppliers } from '../db/schema';
 import type { AppEnv } from '../env';
-import { inventoryInfo } from '../inventory';
+import { inventoryInfo, previousAvailable } from '../inventory';
 import { snapshotInfo } from '../outbound';
 import { loadRatioLookup } from '../palletRatios';
 import { groupInboundByDay, groupInboundByPart, outboundReport, supplierScorecard, toArrivalEntry, withPallets } from '../reports';
@@ -94,7 +95,7 @@ reportsRoutes.get('/supply', async (c) => {
   const body: SupplyResponse = {
     inventory: supply.inventory ? inventoryInfo(supply.inventory) : null,
     outboundReportDate: supply.outbound?.reportDate ?? null,
-    parts: supplyParts(supply),
+    parts: supplyParts(supply, supply.inventory ? await previousAvailable(db, supply.inventory) : null),
   };
   return c.json(body);
 });
@@ -106,7 +107,7 @@ reportsRoutes.get('/dashboard', async (c) => {
   const [supply, ratios, [lastImport]] = await Promise.all([
     loadSupply(db, branch),
     loadRatioLookup(db),
-    db.select({ reportDate: imports.reportDate }).from(imports).where(isNotNull(imports.completedAt)).orderBy(desc(imports.reportDate)).limit(1),
+    db.select({ reportDate: imports.reportDate }).from(imports).where(activeImport).orderBy(desc(imports.reportDate)).limit(1),
   ]);
   return c.json(dashboard(supply, ratios, lastImport?.reportDate ?? null, todayIso()));
 });

@@ -22,10 +22,12 @@ const COLUMNS = {
   scheduledShipDate: 'systemscheduleshipdate',
   confirmedShipDate: 'wintecconfirmedshipdate',
   dockDate: 'emsrequesteddockdate',
+  // The report spells it "Origianl Requested Date".
+  originalRequestDate: ['origianlrequesteddate', 'originalrequesteddate'],
   poReceiptDate: 'poreceiptdate',
 } as const;
 type Column = keyof typeof COLUMNS;
-const REQUIRED: Column[] = ['soNumber', 'shipTo', 'cpn', 'quantity'];
+const REQUIRED = ['soNumber', 'shipTo', 'cpn', 'quantity'] as const satisfies Column[];
 /** Ship dates this far out are placeholders for "not scheduled yet" (the report uses 2099). */
 const PLACEHOLDER_YEAR = 2090;
 
@@ -57,12 +59,15 @@ export interface ParsedOdmOrders {
 export function parseOdmOrders(wb: XLSX.WorkBook, sheetName: string): ParsedOdmOrders {
   const sheet = parseSheet(wb, sheetName);
   const header = new Map(sheet.headers.map((h) => [norm(h), h]));
-  const missing = REQUIRED.filter((c) => !header.has(COLUMNS[c]));
+  const columnHeader = Object.fromEntries(
+    (Object.keys(COLUMNS) as Column[]).map((c) => [c, ([COLUMNS[c]].flat() as string[]).map((n) => header.get(n)).find(Boolean)]),
+  ) as Record<Column, string | undefined>;
+  const missing = REQUIRED.filter((c) => !columnHeader[c]);
   if (missing.length) {
     throw new Error(`"${sheetName}" is missing column${missing.length > 1 ? 's' : ''}: ${missing.map((c) => COLUMNS[c]).join(', ')}`);
   }
   const get = (row: Record<string, Cell>, c: Column): Cell => {
-    const h = header.get(COLUMNS[c]);
+    const h = columnHeader[c];
     return h ? (row[h] ?? null) : null;
   };
 
@@ -102,6 +107,7 @@ export function parseOdmOrders(wb: XLSX.WorkBook, sheetName: string): ParsedOdmO
       scheduledShipDate: scheduled,
       confirmedShipDate: confirmed,
       dockDate: toIsoDate(get(r, 'dockDate')),
+      originalRequestDate: toIsoDate(get(r, 'originalRequestDate')),
       poReceiptDate: toIsoDate(get(r, 'poReceiptDate')),
     };
     const key = [order.soNumber, order.status, order.cpn, order.mpn, order.shipTo, order.shipDate].join('\u0000');
@@ -113,7 +119,7 @@ export function parseOdmOrders(wb: XLSX.WorkBook, sheetName: string): ParsedOdmO
     prev.quantity += order.quantity;
     prev.totalPrice = prev.totalPrice === null && order.totalPrice === null ? null : (prev.totalPrice ?? 0) + (order.totalPrice ?? 0);
     prev.sourceRows++;
-    for (const k of ['emsPo', 'warehouse', 'manufacturer', 'businessGroup', 'packagingType', 'dockDate', 'poReceiptDate'] as const) prev[k] ??= order[k];
+    for (const k of ['emsPo', 'warehouse', 'manufacturer', 'businessGroup', 'packagingType', 'dockDate', 'originalRequestDate', 'poReceiptDate'] as const) prev[k] ??= order[k];
   });
 
   const list = [...orders.values()];

@@ -15,6 +15,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import type { OrderChangeCause, OrderChangeKind } from '../../shared/orderChanges';
 import type { RatioSource, RatioValues } from '../../shared/pallets';
 import { ARRIVAL_SOURCES, PO_STATUSES, SHIPMENT_MODES, SHIPMENT_STATUSES, type ColumnMapping, type LineChangeKind, type RegistrationState } from '../../shared/types';
 
@@ -49,7 +50,30 @@ export const imports = pgTable('imports', {
   newlyClosed: integer('newly_closed').notNull().default(0),
   removedAwaiting: integer('removed_awaiting').notNull().default(0),
   mappingId: integer('mapping_id').references(() => columnMappings.id, { onDelete: 'set null' }),
+  /** The report's rows are kept (po_report_lines), so the PO history can be rebuilt from it. */
+  linesStored: boolean('lines_stored').notNull().default(false),
+  /** Set when the report is deleted; the row goes once the history has been rebuilt without it. */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
+
+/**
+ * One version of one PO line as a report listed it. A line that doesn't change between reports
+ * keeps one version, so keeping every report stays small.
+ */
+export const poLineVersions = pgTable('po_line_versions', {
+  id: serial('id').primaryKey(),
+  dedupeKey: text('dedupe_key').notNull(),
+  /** PO number (or the line's key when it has none): lines of one PO are replayed together. */
+  groupKey: text('group_key').notNull(),
+  hash: text('hash').notNull(),
+  data: jsonb('data').notNull(),
+}, (t) => [uniqueIndex('po_line_versions_key_idx').on(t.dedupeKey, t.hash), index('po_line_versions_group_idx').on(t.groupKey)]);
+
+/** Which line versions each Supplier PO report listed. */
+export const poReportLines = pgTable('po_report_lines', {
+  importId: integer('import_id').notNull().references(() => imports.id, { onDelete: 'cascade' }),
+  versionId: integer('version_id').notNull().references(() => poLineVersions.id, { onDelete: 'cascade' }),
+}, (t) => [primaryKey({ columns: [t.importId, t.versionId] }), index('po_report_lines_version_idx').on(t.versionId)]);
 
 export const suppliers = pgTable('suppliers', {
   id: serial('id').primaryKey(),
@@ -313,7 +337,10 @@ export const outboundOrders = pgTable('outbound_orders', {
   shipDateSource: text('ship_date_source').$type<'confirmed' | 'scheduled'>(),
   scheduledShipDate: date('scheduled_ship_date'),
   confirmedShipDate: date('confirmed_ship_date'),
+  /** EMS Requested Dock Date: when the customer wants it. */
   dockDate: date('dock_date'),
+  /** The report's "Origianl Requested Date". */
+  originalRequestDate: date('original_request_date'),
   poReceiptDate: date('po_receipt_date'),
 }, (t) => [
   index('outbound_orders_ship_date_idx').on(t.snapshotId, t.shipDate),
@@ -351,3 +378,38 @@ export const inventoryPositions = pgTable('inventory_positions', {
   oldestReceiptDate: date('oldest_receipt_date'),
   sourceRows: integer('source_rows').notNull().default(1),
 }, (t) => [uniqueIndex('inventory_positions_part_idx').on(t.snapshotId, t.partNumber, t.branch)]);
+
+/**
+ * What changed on one sales order line (SO# + CPN) in a snapshot compared with the previous one.
+ * Recomputed when a snapshot completes, and for the next newer one, so out-of-order imports stay right.
+ */
+export const outboundChanges = pgTable('outbound_changes', {
+  id: serial('id').primaryKey(),
+  snapshotId: integer('snapshot_id').notNull().references(() => outboundSnapshots.id, { onDelete: 'cascade' }),
+  reportDate: date('report_date').notNull(),
+  previousReportDate: date('previous_report_date').notNull(),
+  soNumber: text('so_number').notNull(),
+  cpn: text('cpn'),
+  shipTo: text('ship_to'),
+  warehouse: text('warehouse'),
+  kind: text('kind').$type<OrderChangeKind>().notNull(),
+  fromValue: text('from_value'),
+  toValue: text('to_value'),
+  causes: jsonb('causes').$type<OrderChangeCause[]>().notNull().default([]),
+}, (t) => [
+  index('outbound_changes_line_idx').on(t.soNumber, t.cpn),
+  index('outbound_changes_snapshot_idx').on(t.snapshotId),
+]);
+
+/** A team note on why an order line changed. Keyed by line, report date and kind so it survives a re-import. */
+export const orderChangeNotes = pgTable('order_change_notes', {
+  id: serial('id').primaryKey(),
+  soNumber: text('so_number').notNull(),
+  cpn: text('cpn'),
+  reportDate: date('report_date').notNull(),
+  kind: text('kind').$type<OrderChangeKind>().notNull(),
+  note: text('note').notNull(),
+  createdBy: text('created_by').notNull(),
+  createdByLabel: text('created_by_label'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index('order_change_notes_line_idx').on(t.soNumber, t.cpn)]);

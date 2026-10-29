@@ -131,6 +131,7 @@ const post = async <T,>(path: string, body: unknown) =>
 const today = todayIso();
 const order = (over: Partial<OutboundOrderInput>): OutboundOrderInput => ({
   soNumber: '1',
+  originalRequestDate: null,
   emsPo: null,
   status: 'Reserved Physical',
   warehouse: 'JIT-MSUS-META',
@@ -169,7 +170,7 @@ describe('outbound import and report', () => {
   it('reports what changed since the previous snapshot and replaces re-uploads of the same date', async () => {
     await importSnapshot('2026-10-10', [order({ soNumber: '1' }), order({ soNumber: '2' }), order({ soNumber: '3' })]);
     const second = await importSnapshot('2026-10-18', [order({ soNumber: '2', quantity: 50 }), order({ soNumber: '3' }), order({ soNumber: '4' })]);
-    expect(second.changes).toEqual({ previousReportDate: '2026-10-10', noLongerListed: 1, added: 1, quantityChanged: 1 });
+    expect(second.changes).toMatchObject({ previousReportDate: '2026-10-10', noLongerListed: 1, added: 1, quantityChanged: 1, summary: { added: 1, gone: 1, quantity: 1 } });
 
     const again = await importSnapshot('2026-10-18', [order({ soNumber: '3' })]);
     expect(again.changes).toMatchObject({ noLongerListed: 2, added: 0 });

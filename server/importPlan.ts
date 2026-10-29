@@ -197,3 +197,110 @@ export function planImport(
   }
   return { rows: planned, insertCount: planned.length - updateCount, updateCount, newlyClosed, promisedDateChanges, changes };
 }
+
+/** One kept Supplier PO report, as replayed by `replayImports`. */
+export interface ReplayImport {
+  id: number;
+  reportDate: string;
+  rows: IncomingRow[];
+}
+
+export interface ReplayedLine extends PlannedRow {
+  firstImportId: number;
+  lastImportId: number;
+}
+
+export interface ImportCounts {
+  inserted: number;
+  updated: number;
+  promisedDateChanges: number;
+  newlyClosed: number;
+  removedAwaiting: number;
+}
+
+export interface ReplayResult {
+  lines: Map<string, ReplayedLine>;
+  changes: (PlannedChange & { importId: number; reportDate: string })[];
+  promisedDateChanges: (ImportPlan['promisedDateChanges'][number] & { importId: number })[];
+  counts: Map<number, ImportCounts>;
+}
+
+/**
+ * Imports reports oldest first, in memory, exactly as uploading them one by one would: each
+ * report is planned against the state the earlier ones left (`planImport`), then "awaiting
+ * shipment" lines it no longer lists are dropped, their history carried onto the line that shipped.
+ * Lines of different POs never affect each other, so a subset of POs can be replayed at a time.
+ */
+export function replayImports(reports: ReplayImport[]): ReplayResult {
+  const lines = new Map<string, ReplayedLine>();
+  let changes: ReplayResult['changes'] = [];
+  let promisedDateChanges: ReplayResult['promisedDateChanges'] = [];
+  const counts = new Map<number, ImportCounts>();
+
+  for (const report of reports) {
+    const existing: ExistingShipment[] = [];
+    const awaiting = new Set<string>();
+    for (const l of lines.values()) {
+      if (l.status === 'awaiting_shipment') {
+        const key = poLineKey(l);
+        if (key) awaiting.add(key);
+      }
+    }
+    for (const r of report.rows) {
+      const l = lines.get(r.dedupeKey);
+      if (l) {
+        existing.push({
+          id: 0,
+          dedupeKey: l.dedupeKey,
+          poStatus: l.poStatus ?? null,
+          status: l.status,
+          promisedArrivalDate: l.promisedArrivalDate,
+          actualArrivalDate: l.actualArrivalDate,
+          arrivalSource: l.arrivalSource,
+          arrivalWindowStart: l.arrivalWindowStart,
+          arrivalWindowEnd: l.arrivalWindowEnd,
+          lastSeenOpenReportDate: l.lastSeenOpenReportDate,
+          lastTrackedAt: null,
+          shipDate: l.shipDate ?? null,
+          trackingNumber: l.trackingNumber ?? null,
+        });
+      }
+    }
+    const plan = planImport(report.rows, existing, report.reportDate, awaiting);
+    for (const next of plan.rows) {
+      const prev = lines.get(next.dedupeKey);
+      // A later report may leave carrier and mode blank; keep what an earlier one said.
+      lines.set(next.dedupeKey, {
+        ...next,
+        carrier: next.carrier ?? prev?.carrier ?? null,
+        mode: next.mode ?? prev?.mode ?? null,
+        firstImportId: prev?.firstImportId ?? report.id,
+        lastImportId: report.id,
+      });
+    }
+    changes.push(...plan.changes.map((c) => ({ ...c, importId: report.id, reportDate: report.reportDate })));
+    promisedDateChanges.push(...plan.promisedDateChanges.map((c) => ({ ...c, importId: report.id })));
+
+    const stale = [...lines.values()].filter((l) => l.status === 'awaiting_shipment' && l.lastImportId !== report.id);
+    for (const old of stale) {
+      const key = poLineKey(old);
+      const shipped = [...lines.values()].filter((l) => l.dedupeKey !== old.dedupeKey && l.lastImportId === report.id && key !== null && poLineKey(l) === key);
+      const history = changes.filter((c) => c.dedupeKey === old.dedupeKey);
+      for (const s of shipped) changes.push(...history.map((c) => ({ ...c, dedupeKey: s.dedupeKey })));
+      lines.delete(old.dedupeKey);
+    }
+    const gone = new Set(stale.map((l) => l.dedupeKey));
+    if (gone.size) {
+      changes = changes.filter((c) => !gone.has(c.dedupeKey));
+      promisedDateChanges = promisedDateChanges.filter((c) => !gone.has(c.dedupeKey));
+    }
+    counts.set(report.id, {
+      inserted: plan.insertCount,
+      updated: plan.updateCount,
+      promisedDateChanges: plan.promisedDateChanges.length,
+      newlyClosed: plan.newlyClosed,
+      removedAwaiting: stale.length,
+    });
+  }
+  return { lines, changes, promisedDateChanges, counts };
+}
