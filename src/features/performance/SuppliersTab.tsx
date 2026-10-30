@@ -9,6 +9,7 @@ import { api, qs } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 import { daysText, onTimeHint, pctText, SupplierStatusBadge } from './common';
 import { SupplierDrawer } from './SupplierDrawer';
+import { SupplierExport } from './SupplierExport';
 import { Sparkline, TrendChart } from './TrendChart';
 
 const COLUMNS: Column<SupplierRating>[] = [
@@ -71,6 +72,8 @@ export function SuppliersTab({ branch, period }: { branch: string; period: strin
           </p>
         )
       )}
+
+      <SupplierExport branch={branch} includeHistory={includeHistory} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Received on time" value={pctText(t.arrival.onTimePct)} warn={(t.arrival.onTimePct ?? 100) < 80} hint={onTimeHint(t.arrival, t.previousArrival)} />

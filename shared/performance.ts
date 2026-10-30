@@ -89,6 +89,7 @@ export interface SupplierLine {
   branch: string | null;
   poNumber: string | null;
   lineRef: string | null;
+  asn: string | null;
   partNumber: string | null;
   quantity: number | null;
   requestDate: string | null;
@@ -102,6 +103,8 @@ export interface SupplierLine {
   arrived: string | null;
   /** The final ETD once the line has shipped (ASN, tracking or closed). */
   shipped: string | null;
+  /** Closed in the report or delivered: no longer waiting on the supplier. */
+  done: boolean;
   /**
    * `first`: the promise was recorded before the event, so the line is measured against it.
    * `final` (arrival only): received before our first upload listed it, so only its last ETA is
@@ -193,6 +196,7 @@ export function supplierLine(l: SupplierLineInput, arrived: string | null): Supp
     branch: l.branch,
     poNumber: l.poNumber,
     lineRef: l.lineRef,
+    asn: l.asn,
     partNumber: l.partNumber,
     quantity: l.quantity,
     requestDate: l.requestDate,
@@ -204,6 +208,7 @@ export function supplierLine(l: SupplierLineInput, arrived: string | null): Supp
     finalEtd: l.etd,
     arrived,
     shipped,
+    done: isDone(l),
     arrivalBaseline: arrival.baseline,
     arrivalDaysLate: arrival.daysLate,
     shipBaseline: ship.baseline,
@@ -326,6 +331,231 @@ export function scoreSuppliers(lines: SupplierLine[], opts: ScoreOptions): Suppl
 export function supplierTrend(lines: SupplierLine[], today: string, includeHistory: boolean, n = 12) {
   const months = lastMonths(today, n);
   return { arrival: monthly(lines, months, 'arrival', includeHistory), ship: monthly(lines, months, 'ship', includeHistory) };
+}
+
+/* ---------- Supplier report (Excel export) ---------- */
+
+export interface LineMoves {
+  eta: DateMove[];
+  etd: DateMove[];
+}
+
+export interface SupplierReportRow {
+  supplier: string;
+  /** As of today, from the last months' arrivals (see supplierStatus). */
+  status: SupplierStatus | null;
+  /** Received in the range. */
+  received: number;
+  /** Of those, measured against a promise recorded before they arrived. */
+  measured: number;
+  onTime: number;
+  late: number;
+  onTimePct: number | null;
+  medianDaysLate: number | null;
+  maxDaysLate: number | null;
+  /** Still waiting today, past the first ETA. */
+  openPastDue: number;
+  /** ETA / ETD changes seen in uploads within the range. */
+  etaChanges: number;
+  etdChanges: number;
+  linesWithEtaChanges: number;
+  etaDaysPushed: number;
+  shipMeasured: number;
+  shippedLate: number;
+  etdAfterRequestPct: number | null;
+}
+
+/** One delivery line in the report; change counts cover every upload, not only the range. */
+export interface ReportLine {
+  supplier: string;
+  branch: string | null;
+  poNumber: string | null;
+  lineRef: string | null;
+  asn: string | null;
+  partNumber: string | null;
+  quantity: number | null;
+  requestDate: string | null;
+  firstEta: string | null;
+  firstEtaSeen: string | null;
+  finalEta: string | null;
+  firstEtd: string | null;
+  finalEtd: string | null;
+  arrived: string | null;
+  baseline: Baseline | null;
+  /** Arrival days late; for open lines, days past the first ETA today. */
+  daysLate: number | null;
+  shipped: string | null;
+  shipDaysLate: number | null;
+  etaChanges: number;
+  etdChanges: number;
+  etaDaysPushed: number;
+}
+
+export interface DateChangeRow {
+  supplier: string;
+  poNumber: string | null;
+  lineRef: string | null;
+  asn: string | null;
+  quantity: number | null;
+  partNumber: string | null;
+  branch: string | null;
+  reportDate: string;
+  field: 'ETA' | 'ETD';
+  from: string;
+  to: string;
+  /** Positive = pushed later. */
+  days: number;
+}
+
+export interface SupplierMonthRow {
+  supplier: string;
+  month: string;
+  measured: number;
+  late: number;
+  onTimePct: number | null;
+  medianDaysLate: number | null;
+  etaChanges: number;
+}
+
+export interface SupplierReportData {
+  suppliers: SupplierReportRow[];
+  /** Received late in the range, worst first per supplier. */
+  late: ReportLine[];
+  /** Not received today and past their first ETA, most overdue first. */
+  openPastDue: ReportLine[];
+  changes: DateChangeRow[];
+  months: SupplierMonthRow[];
+}
+
+/** Calendar months from `from`'s to `to`'s, oldest first. */
+export function monthsBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  let [y, m] = [+from.slice(0, 4), +from.slice(5, 7)];
+  const end = monthOf(to);
+  for (let month = monthOf(from); month <= end; month = `${y}-${String(m).padStart(2, '0')}`) {
+    out.push(month);
+    [y, m] = m === 12 ? [y + 1, 1] : [y, m + 1];
+  }
+  return out;
+}
+
+const realMoves = (moves: DateMove[]) => moves.filter((m): m is DateMove & { from: string; to: string } => !!m.from && !!m.to);
+
+/**
+ * Per supplier: late deliveries and how often their ETA/ETD changed. Deliveries count when received
+ * in [from, to]; changes count when an upload in [from, to] recorded them; open past-due is as of today.
+ */
+export function supplierReport(lines: SupplierLine[], moves: Map<number, LineMoves>, opts: ScoreOptions): SupplierReportData {
+  const inRange = (d: string | null) => !!d && d >= opts.from && d <= opts.to;
+  const movesOf = (l: SupplierLine) => ({ eta: realMoves(moves.get(l.id)?.eta ?? []), etd: realMoves(moves.get(l.id)?.etd ?? []) });
+  const reportLine = (l: SupplierLine, daysLate: number | null): ReportLine => {
+    const m = movesOf(l);
+    return {
+      supplier: l.supplier,
+      branch: l.branch,
+      poNumber: l.poNumber,
+      lineRef: l.lineRef,
+      asn: l.asn,
+      partNumber: l.partNumber,
+      quantity: l.quantity,
+      requestDate: l.requestDate,
+      firstEta: l.firstEta,
+      firstEtaSeen: l.firstEtaSeen,
+      finalEta: l.finalEta,
+      firstEtd: l.firstEtd,
+      finalEtd: l.finalEtd,
+      arrived: l.arrived,
+      baseline: l.arrivalBaseline,
+      daysLate,
+      shipped: l.shipped,
+      shipDaysLate: l.shipDaysLate,
+      etaChanges: m.eta.length,
+      etdChanges: m.etd.length,
+      etaDaysPushed: l.etaDaysPushed,
+    };
+  };
+  const measured = (l: SupplierLine) => inRange(l.arrived) && counts(l.arrivalBaseline, opts.includeHistory);
+  const pastDueDays = (l: SupplierLine) => {
+    const promise = l.firstEta ?? l.finalEta;
+    return !l.arrived && !l.done && promise && promise < opts.today ? daysBetween(promise, opts.today) : null;
+  };
+
+  const bySupplier = new Map<string, SupplierLine[]>();
+  for (const l of lines) bySupplier.set(l.supplier, [...(bySupplier.get(l.supplier) ?? []), l]);
+  const monthList = monthsBetween(opts.from, opts.to);
+
+  const suppliers: SupplierReportRow[] = [];
+  const months: SupplierMonthRow[] = [];
+  const changes: DateChangeRow[] = [];
+  for (const [supplier, list] of bySupplier) {
+    const days = list.filter(measured).map((l) => l.arrivalDaysLate!);
+    const arrival = onTime(days);
+    const shipDays = list.filter((l) => inRange(l.shipped) && counts(l.shipBaseline, opts.includeHistory)).map((l) => l.shipDaysLate!);
+    let etaChanges = 0;
+    let etdChanges = 0;
+    let linesWithEtaChanges = 0;
+    let etaDaysPushed = 0;
+    for (const l of list) {
+      const m = movesOf(l);
+      const eta = m.eta.filter((x) => inRange(x.reportDate));
+      const etd = m.etd.filter((x) => inRange(x.reportDate));
+      etaChanges += eta.length;
+      etdChanges += etd.length;
+      if (eta.length) linesWithEtaChanges++;
+      etaDaysPushed += eta.reduce((n, x) => n + Math.max(0, daysBetween(x.from, x.to)), 0);
+      for (const [field, found] of [['ETA', eta], ['ETD', etd]] as const) {
+        for (const x of found) {
+          changes.push({ supplier, poNumber: l.poNumber, lineRef: l.lineRef, asn: l.asn, quantity: l.quantity, partNumber: l.partNumber, branch: l.branch, reportDate: x.reportDate, field, from: x.from, to: x.to, days: daysBetween(x.from, x.to) });
+        }
+      }
+    }
+    const received = list.filter((l) => inRange(l.arrived)).length;
+    const openPastDue = list.filter((l) => pastDueDays(l) !== null).length;
+    if (!received && !openPastDue && !etaChanges && !etdChanges) continue;
+    const withRequest = list.filter((l) => (inRange(l.arrived) || !l.arrived) && l.etdAfterRequest !== null);
+    suppliers.push({
+      supplier,
+      status: supplierStatus(list, arrival, opts),
+      received,
+      measured: arrival.count,
+      onTime: arrival.onTime,
+      late: arrival.count - arrival.onTime,
+      onTimePct: arrival.onTimePct,
+      medianDaysLate: arrival.medianDaysLate,
+      maxDaysLate: days.some((d) => d > 0) ? Math.max(...days) : null,
+      openPastDue,
+      etaChanges,
+      etdChanges,
+      linesWithEtaChanges,
+      etaDaysPushed,
+      shipMeasured: shipDays.length,
+      shippedLate: shipDays.filter((d) => d > 0).length,
+      etdAfterRequestPct: pct(withRequest.filter((l) => l.etdAfterRequest).length, withRequest.length),
+    });
+    for (const month of monthList) {
+      const o = onTime(list.filter((l) => measured(l) && monthOf(l.arrived!) === month).map((l) => l.arrivalDaysLate!));
+      const moved = list.reduce((n, l) => n + movesOf(l).eta.filter((x) => inRange(x.reportDate) && monthOf(x.reportDate) === month).length, 0);
+      if (o.count || moved) months.push({ supplier, month, measured: o.count, late: o.count - o.onTime, onTimePct: o.onTimePct, medianDaysLate: o.medianDaysLate, etaChanges: moved });
+    }
+  }
+
+  const rank = (s: SupplierReportRow) => (s.status === 'consistently_late' ? 0 : s.status === 'getting_worse' ? 1 : 2);
+  suppliers.sort((a, b) => rank(a) - rank(b) || b.late - a.late || b.openPastDue - a.openPastDue || b.etaChanges - a.etaChanges || a.supplier.localeCompare(b.supplier));
+  const order = new Map(suppliers.map((s, i) => [s.supplier, i]));
+  const bySupplierOrder = (a: { supplier: string }, b: { supplier: string }) => order.get(a.supplier)! - order.get(b.supplier)!;
+  return {
+    suppliers,
+    late: lines
+      .filter((l) => measured(l) && l.arrivalDaysLate! > 0)
+      .map((l) => reportLine(l, l.arrivalDaysLate))
+      .sort((a, b) => bySupplierOrder(a, b) || b.daysLate! - a.daysLate!),
+    openPastDue: lines
+      .filter((l) => pastDueDays(l) !== null)
+      .map((l) => reportLine(l, pastDueDays(l)))
+      .sort((a, b) => b.daysLate! - a.daysLate! || bySupplierOrder(a, b)),
+    changes: changes.sort((a, b) => bySupplierOrder(a, b) || a.reportDate.localeCompare(b.reportDate) || (a.poNumber ?? '').localeCompare(b.poNumber ?? '')),
+    months: months.sort((a, b) => bySupplierOrder(a, b) || a.month.localeCompare(b.month)),
+  };
 }
 
 /* ---------- Our shipping ---------- */

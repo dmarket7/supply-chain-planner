@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { addDays, daysBetween } from '../shared/dates';
 import {
   matchShipments,
@@ -10,16 +10,17 @@ import {
   shipOnTime,
   shipTrend,
   supplierLine,
+  supplierReport,
   supplierTrend,
   lastMonths,
   onTime,
-  type DateMove,
+  type LineMoves,
   type OrderSeen,
   type PastDueRow,
   type SupplierLine,
   type SupplierLineInput,
 } from '../shared/performance';
-import type { ReceivingResponse, ShippingPerformanceResponse, SupplierDetailResponse, SupplierPerformanceResponse } from '../shared/types';
+import type { ReceivingResponse, ShippingPerformanceResponse, SupplierDetailResponse, SupplierPerformanceResponse, SupplierReportResponse } from '../shared/types';
 import type { Db } from './db/client';
 import { imports, lineChanges, outboundOrders, outboundSnapshots, poLineVersions, poReceipts, poReportLines, shipments, soShipments, suppliers } from './db/schema';
 import { activeImport } from './poHistory';
@@ -29,7 +30,7 @@ export const PERIODS = [90, 180, 365] as const;
 export const periodOf = (v: string | undefined) => (PERIODS as readonly number[]).includes(Number(v)) ? Number(v) : 90;
 
 /** Every Supplier POs line with its first ETA/ETD, date moves and when it was received. */
-export async function loadSupplierLines(db: Db, branch: string | undefined): Promise<{ lines: SupplierLine[]; firstUpload: string | null }> {
+export async function loadSupplierLines(db: Db, branch: string | undefined): Promise<{ lines: SupplierLine[]; moves: Map<number, LineMoves>; firstUpload: string | null }> {
   const [rows, moves, lots, [first]] = await Promise.all([
     db
       .select({
@@ -62,7 +63,7 @@ export async function loadSupplierLines(db: Db, branch: string | undefined): Pro
     db.select({ poNumber: poReceipts.poNumber, poLine: poReceipts.poLine, receiptDate: poReceipts.receiptDate }).from(poReceipts),
     db.select({ reportDate: sql<string | null>`min(${imports.reportDate})::text` }).from(imports).where(activeImport),
   ]);
-  const movesBy = new Map<number, { eta: DateMove[]; etd: DateMove[] }>();
+  const movesBy = new Map<number, LineMoves>();
   for (const m of moves) {
     const entry = movesBy.get(m.shipmentId) ?? { eta: [], etd: [] };
     (m.kind === 'eta_changed' ? entry.eta : entry.etd).push({ reportDate: m.reportDate, from: m.from, to: m.to });
@@ -75,7 +76,7 @@ export async function loadSupplierLines(db: Db, branch: string | undefined): Pro
     etdMoves: movesBy.get(r.id)?.etd ?? [],
   }));
   const received = receivedDates(inputs, lots);
-  return { lines: inputs.map((l) => supplierLine(l, received.get(l.id) ?? null)), firstUpload: first?.reportDate ?? null };
+  return { lines: inputs.map((l) => supplierLine(l, received.get(l.id) ?? null)), moves: movesBy, firstUpload: first?.reportDate ?? null };
 }
 
 export async function supplierPerformance(db: Db, opts: { branch?: string; period: number; includeHistory: boolean; today: string }): Promise<SupplierPerformanceResponse> {
@@ -117,6 +118,28 @@ export async function supplierDetail(db: Db, supplier: string, opts: { branch?: 
     supplier,
     trend: supplierTrend(mine, opts.today, opts.includeHistory),
     lines: mine.sort((a, b) => late(b) - late(a) || (b.arrived ?? b.finalEta ?? '').localeCompare(a.arrived ?? a.finalEta ?? '')).slice(0, 300),
+  };
+}
+
+/** Late deliveries and ETA/ETD changes per supplier over [from, to], for the Excel export. */
+export async function supplierReportData(db: Db, opts: { branch?: string; from: string; to: string; includeHistory: boolean; today: string }): Promise<SupplierReportResponse> {
+  const [{ lines, moves, firstUpload }, uploads] = await Promise.all([
+    loadSupplierLines(db, opts.branch),
+    db
+      .select({ reportDate: sql<string>`${imports.reportDate}::text` })
+      .from(imports)
+      .where(and(activeImport, gte(imports.reportDate, opts.from), lte(imports.reportDate, opts.to)))
+      .orderBy(asc(imports.reportDate)),
+  ]);
+  return {
+    ...supplierReport(lines, moves, { from: opts.from, to: opts.to, today: opts.today, includeHistory: opts.includeHistory }),
+    from: opts.from,
+    to: opts.to,
+    today: opts.today,
+    branch: opts.branch ?? null,
+    includeHistory: opts.includeHistory,
+    firstUpload,
+    uploads: [...new Set(uploads.map((u) => u.reportDate))],
   };
 }
 
