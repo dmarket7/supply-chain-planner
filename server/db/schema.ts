@@ -413,3 +413,44 @@ export const orderChangeNotes = pgTable('order_change_notes', {
   createdByLabel: text('created_by_label'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [index('order_change_notes_line_idx').on(t.soNumber, t.cpn)]);
+
+/**
+ * One receipt of a PO line at a branch, from the Inventory Summary tab (one row per received lot).
+ * Receipts are facts: every upload adds the lots it lists and none are removed.
+ */
+export const poReceipts = pgTable('po_receipts', {
+  id: serial('id').primaryKey(),
+  poNumber: text('po_number').notNull(),
+  /** The Inventory Summary's line number; a Supplier POs line "1-2" is delivery 2 of line 1. */
+  poLine: text('po_line').notNull(),
+  branch: text('branch').notNull(),
+  partNumber: text('part_number'),
+  /** MaterialRecDate: received at Wintec. */
+  receiptDate: date('receipt_date').notNull(),
+  /** Actual_ReceiveDate: arrived at this branch (later than the receipt for stock moved to quarantine). */
+  arrivedDate: date('arrived_date'),
+  quantity: numeric('quantity', { mode: 'number' }),
+  lastReportDate: date('last_report_date').notNull(),
+}, (t) => [uniqueIndex('po_receipts_lot_idx').on(t.poNumber, t.poLine, t.branch, t.receiptDate)]);
+
+/** One sales order line Wintec shipped, from the Transactions tab. Each report repeats past shipments. */
+export const soShipments = pgTable('so_shipments', {
+  id: serial('id').primaryKey(),
+  dedupeKey: text('dedupe_key').notNull().unique(),
+  /** The ODM (ship-to). */
+  shipTo: text('ship_to'),
+  /** Matches the ODM Open Order tab's EMS PO#. */
+  odmPo: text('odm_po'),
+  odmPoLine: text('odm_po_line'),
+  partNumber: text('part_number'),
+  branch: text('branch'),
+  wintecPo: text('wintec_po'),
+  quantity: numeric('quantity', { mode: 'number' }),
+  shipDate: date('ship_date').notNull(),
+  soEtd: date('so_etd'),
+  soEta: date('so_eta'),
+  /** Receipt of the stock it shipped from. */
+  receiptDate: date('receipt_date'),
+  tracking: text('tracking'),
+  firstReportDate: date('first_report_date').notNull(),
+}, (t) => [index('so_shipments_order_idx').on(t.odmPo, t.partNumber), index('so_shipments_date_idx').on(t.shipDate)]);

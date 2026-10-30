@@ -9,6 +9,8 @@ import {
   IMPORT_CHUNK_SIZE,
   INVENTORY_CHUNK_SIZE,
   OUTBOUND_CHUNK_SIZE,
+  RECEIPT_CHUNK_SIZE,
+  SHIPPED_CHUNK_SIZE,
   TARGET_FIELDS,
   type ColumnMapping,
   type ImportResult,
@@ -24,10 +26,11 @@ import { FIELD_LABELS, PRIMARY_FIELDS, REQUIRED_FIELDS, guessMapping } from './g
 import { normalizeRow, reportDateFromFileName, type NormalizedRow } from './normalize';
 import { findInventorySheet, parseInventorySummary, type ParsedInventory } from './parseInventorySummary';
 import { findOdmSheet, parseOdmOrders, type ParsedOdmOrders } from './parseOdmOrders';
+import { findTransactionsSheet, parseTransactions, type ParsedTransactions } from './parseTransactions';
 import { headerSignature, parseSheet, readWorkbook, type ParsedSheet } from './parseWorkbook';
 import { ImportHistory } from './ImportHistory';
 import { rebuildPoHistory } from './rebuildHistory';
-import { uploadChunked } from './uploadChunked';
+import { postChunks, uploadChunked } from './uploadChunked';
 
 /** The tab that holds inbound PO lines in the Meerkat report; other reports fall back to the first sheet. */
 const PREFERRED_SHEET = /supplier\s*po/i;
@@ -41,16 +44,16 @@ const BUCKET_LABELS: Record<Bucket, string> = {
   error: 'Errors',
 };
 
-/** The three tabs one import covers, in the order they're saved. */
-const STEPS = ['po', 'outbound', 'inventory'] as const;
+/** The tabs one import covers, in the order they're saved. */
+const STEPS = ['po', 'outbound', 'inventory', 'shipped'] as const;
 type Step = (typeof STEPS)[number];
-const STEP_TITLES: Record<Step, string> = { po: 'Supplier POs', outbound: 'ODM open orders', inventory: 'Inventory' };
+const STEP_TITLES: Record<Step, string> = { po: 'Supplier POs', outbound: 'ODM open orders', inventory: 'Inventory', shipped: 'Shipped orders (Transactions)' };
 type StepState =
   | { status: 'idle' }
   | { status: 'running'; done?: number; total?: number }
   | { status: 'done'; message: string }
   | { status: 'error'; error: unknown };
-const IDLE: Record<Step, StepState> = { po: { status: 'idle' }, outbound: { status: 'idle' }, inventory: { status: 'idle' } };
+const IDLE: Record<Step, StepState> = { po: { status: 'idle' }, outbound: { status: 'idle' }, inventory: { status: 'idle' }, shipped: { status: 'idle' } };
 
 /** A tab read with its own parser; error is set when the tab is there but couldn't be read. */
 interface Tab<T> {
@@ -115,6 +118,7 @@ export function ImportPage() {
   const [filter, setFilter] = useState<Bucket | 'all' | 'warnings'>('all');
   const [odm, setOdm] = useState<Tab<ParsedOdmOrders>>(NO_TAB);
   const [inventory, setInventory] = useState<Tab<ParsedInventory>>(NO_TAB);
+  const [transactions, setTransactions] = useState<Tab<ParsedTransactions>>(NO_TAB);
   const [steps, setSteps] = useState<Record<Step, StepState>>(IDLE);
 
   const savedMappings = useQuery({ queryKey: ['mappings'], queryFn: () => api<SavedMapping[]>('/mappings') });
@@ -136,6 +140,7 @@ export function ImportPage() {
     setSheet(null);
     setOdm(NO_TAB);
     setInventory(NO_TAB);
+    setTransactions(NO_TAB);
     try {
       const data = await file.arrayBuffer();
       await new Promise((r) => setTimeout(r, 0)); // let "Reading…" paint before the blocking parse
@@ -146,6 +151,7 @@ export function ImportPage() {
       selectSheet(wb, wb.SheetNames.find((n) => PREFERRED_SHEET.test(n)) ?? wb.SheetNames[0]);
       setOdm(readTab(findOdmSheet(wb), (n) => parseOdmOrders(wb, n)));
       setInventory(readTab(findInventorySheet(wb), (n) => parseInventorySummary(wb, n)));
+      setTransactions(readTab(findTransactionsSheet(wb), (n) => parseTransactions(wb, n)));
     } catch (e) {
       setParseError(`Couldn't read ${file.name}: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -181,6 +187,7 @@ export function ImportPage() {
     po: !!sheet && shipments.length > 0 && !mappingIncomplete,
     outbound: !!odm.parsed?.orders.length,
     inventory: !!inventory.parsed?.positions.length,
+    shipped: !!transactions.parsed?.rows.length,
   };
 
   const runners: Record<Step, (progress: (done: number, total: number) => void) => Promise<string>> = {
@@ -238,7 +245,13 @@ export function ImportPage() {
         size: INVENTORY_CHUNK_SIZE,
         onProgress: progress,
       });
-      return `Stock for ${p.parts.toLocaleString()} parts in ${result.positionCount.toLocaleString()} part-branch positions.`;
+      await postChunks({ path: '/inventory/receipts', field: 'receipts', items: p.receipts, size: RECEIPT_CHUNK_SIZE, extra: { reportDate }, onProgress: progress });
+      return `Stock for ${p.parts.toLocaleString()} parts in ${result.positionCount.toLocaleString()} part-branch positions, and ${p.receipts.length.toLocaleString()} received lots.`;
+    },
+    shipped: async (progress) => {
+      const p = transactions.parsed!;
+      await postChunks({ path: '/shipped/rows', field: 'rows', items: p.rows, size: SHIPPED_CHUNK_SIZE, extra: { reportDate }, onProgress: progress });
+      return `${p.rows.length.toLocaleString()} shipped order lines, ${formatDate(p.from)} to ${formatDate(p.to)}.`;
     },
   };
 
@@ -279,7 +292,7 @@ export function ImportPage() {
     <div className="space-y-6">
       <PageHeader
         title="Import report"
-        description="Upload the weekly Meerkat inventory report (.xlsx). It's read in your browser, and one button saves the Supplier POs, ODM Open Order and Inventory Summary tabs. Set the report date to the date the report was run; reports can be imported in any order, and each one adds to the change history."
+        description="Upload the weekly Meerkat inventory report (.xlsx). It's read in your browser, and one button saves the Supplier POs, ODM Open Order, Inventory Summary and Transactions tabs. Set the report date to the date the report was run; reports can be imported in any order, and each one adds to the change history."
       />
 
       <Card>
@@ -310,7 +323,7 @@ export function ImportPage() {
 
       {workbook && sheet && (
         <>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <TabCard
               title={STEP_TITLES.po}
               sheetName={sheet.name}
@@ -346,6 +359,15 @@ export function ImportPage() {
                   {inventory.parsed.closedRows.toLocaleString()} fully shipped lots left out
                   {inventory.parsed.heldUnits > 0 && ` · ${inventory.parsed.heldUnits.toLocaleString()} units held (quarantine, RMA, cycle count)`}
                   {inventory.parsed.errors.length > 0 && <span className="text-amber-700 dark:text-amber-300"> · {inventory.parsed.errors.length} rows skipped</span>}
+                </>
+              )}
+            </TabCard>
+            <TabCard title={STEP_TITLES.shipped} sheetName={transactions.parsed?.sheetName} error={transactions.error} state={steps.shipped} onRetry={() => void runAll('shipped')} disabled={running}>
+              {transactions.parsed && (
+                <>
+                  {transactions.parsed.rows.length.toLocaleString()} shipped order lines, {formatDate(transactions.parsed.from)} to {formatDate(transactions.parsed.to)}. Past
+                  shipments repeat in every report and are only added once.
+                  {transactions.parsed.errors.length > 0 && <span className="text-amber-700 dark:text-amber-300"> · {transactions.parsed.errors.length} rows skipped</span>}
                 </>
               )}
             </TabCard>

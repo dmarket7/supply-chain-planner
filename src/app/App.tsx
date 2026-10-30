@@ -8,6 +8,7 @@ import { useSession } from './session';
 const DashboardPage = lazy(() => import('../features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 const InventoryPage = lazy(() => import('../features/inventory/InventoryPage').then((m) => ({ default: m.InventoryPage })));
 const InboundPage = lazy(() => import('../features/inbound/InboundPage').then((m) => ({ default: m.InboundPage })));
+const PerformancePage = lazy(() => import('../features/performance/PerformancePage').then((m) => ({ default: m.PerformancePage })));
 const OutboundPage = lazy(() => import('../features/outbound/OutboundPage').then((m) => ({ default: m.OutboundPage })));
 const ArrivalLogPage = lazy(() => import('../features/arrivals/ArrivalLogPage').then((m) => ({ default: m.ArrivalLogPage })));
 const TrackingSetupPage = lazy(() => import('../features/tracking/TrackingSetupPage').then((m) => ({ default: m.TrackingSetupPage })));
@@ -33,6 +34,7 @@ export function App() {
         <Route path="inbound" element={<InboundPage />} />
         <Route path="outbound" element={<OutboundPage />} />
         <Route path="inventory" element={<InventoryPage />} />
+        <Route path="performance" element={<PerformancePage />} />
         <Route path="shipments" element={<ShipmentsRedirect />} />
         <Route path="arrivals" element={<ArrivalLogPage />} />
         <Route path="tracking" element={<TrackingSetupPage />} />

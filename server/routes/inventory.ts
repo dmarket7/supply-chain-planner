@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
-import { inventoryPositionsChunkSchema, startInventorySchema } from '../../shared/types';
+import { eq, sql } from 'drizzle-orm';
+import { inventoryPositionsChunkSchema, receiptsChunkSchema, startInventorySchema } from '../../shared/types';
 import { getDb } from '../db/client';
-import { inventoryPositions, inventorySnapshots } from '../db/schema';
+import { inventoryPositions, inventorySnapshots, poReceipts } from '../db/schema';
 import type { AppEnv } from '../env';
 import { inventoryInfo, inventorySupersededBy } from '../inventory';
 
@@ -44,4 +44,25 @@ inventoryRoutes.post('/snapshots/:id/complete', async (c) => {
     await db.delete(inventorySnapshots).where(inventorySupersededBy(snap));
   }
   return c.json(inventoryInfo(snap));
+});
+
+/** Received lots (open and closed rows). Receipts are facts, so they're upserted and never removed. */
+inventoryRoutes.post('/receipts', async (c) => {
+  const parsed = receiptsChunkSchema.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: 'Invalid receipts', issues: parsed.error.issues.slice(0, 10) }, 400);
+  const { reportDate, receipts } = parsed.data;
+  const db = getDb(c.env.DATABASE_URL);
+  await db
+    .insert(poReceipts)
+    .values(receipts.map((r) => ({ ...r, lastReportDate: reportDate })))
+    .onConflictDoUpdate({
+      target: [poReceipts.poNumber, poReceipts.poLine, poReceipts.branch, poReceipts.receiptDate],
+      set: {
+        partNumber: sql`coalesce(excluded.part_number, ${poReceipts.partNumber})`,
+        arrivedDate: sql`coalesce(excluded.arrived_date, ${poReceipts.arrivedDate})`,
+        quantity: sql`excluded.quantity`,
+        lastReportDate: sql`greatest(excluded.last_report_date, ${poReceipts.lastReportDate})`,
+      },
+    });
+  return c.json({ ok: true });
 });

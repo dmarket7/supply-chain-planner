@@ -3,7 +3,7 @@ import { createElement as h } from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { CoverageRow, ImportHistoryRow, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
+import type { CoverageRow, ImportHistoryRow, SupplierPerformanceResponse, ShippingPerformanceResponse, ReceivingResponse, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
 import { BranchProvider } from '../src/app/branch';
 import { TrackingPanel } from '../src/features/shipments/TrackingPanel';
 import { changeNotice, TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
@@ -440,5 +440,76 @@ describe('data table', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('performance page', () => {
+  it('shows the supplier scorecard, worst first, with status flags', async () => {
+    const { PerformancePage } = await import('../src/features/performance/PerformancePage');
+    const { lastMonths } = await import('../shared/performance');
+    const months = lastMonths('2026-10-29', 6).map((month) => ({ month, count: 6, onTimePct: 30 }));
+    const ot = (count: number, onTime: number) => ({ count, onTime, onTimePct: count ? Math.round((onTime / count) * 1000) / 10 : null, medianDaysLate: count > onTime ? 9 : null });
+    const data: SupplierPerformanceResponse = {
+      from: '2026-07-31', to: '2026-10-29', period: 90, includeHistory: false, firstUpload: '2026-10-10',
+      totals: { arrival: ot(20, 8), previousArrival: ot(10, 6), ship: ot(4, 3), historyArrivals: 300, suppliers: 2, consistentlyLate: 1, gettingWorse: 0, etaMoves: 7 },
+      trend: { arrival: months, ship: months },
+      suppliers: [
+        { supplier: 'SLOW PARTS', status: 'consistently_late', arrival: ot(16, 4), ship: ot(2, 1), lines: 20, openLines: 4, etaMovesPerLine: 0.5, etdAfterRequestPct: 60, months },
+        { supplier: 'FAST PARTS', status: 'reliable', arrival: ot(4, 4), ship: ot(2, 2), lines: 4, openLines: 0, etaMovesPerLine: 0, etdAfterRequestPct: 0, months },
+      ],
+    };
+    const html = render(h(PerformancePage), [[['performance-suppliers', '', '90', false], data]], '/performance');
+    expect(html).toContain('Supplier scorecard');
+    expect(html.indexOf('SLOW PARTS')).toBeLessThan(html.indexOf('FAST PARTS'));
+    expect(html).toContain('Consistently late');
+    expect(html).toContain('Reliable');
+    expect(html).toMatch(/40%/); // 8 of 20 received on time
+    expect(html).toMatch(/-20 pts vs the period before/);
+    expect(html).toMatch(/300(<!-- -->)? more lines were received/);
+  });
+
+  it('shows our shipping against confirmed, requested and SO ETD dates, by ship-to', async () => {
+    const { PerformancePage } = await import('../src/features/performance/PerformancePage');
+    const { lastMonths, matchShipments, shipGroups, shipOnTime, shipTrend } = await import('../shared/performance');
+    const lines = matchShipments(
+      [
+        { id: 1, shipTo: 'CELESTICA', odmPo: 'P1', partNumber: 'A', branch: 'JIT-MSUS-META', quantity: 5, shipDate: '2026-10-15', soEtd: '2026-10-14' },
+        { id: 2, shipTo: 'QUANTA', odmPo: 'P2', partNumber: 'A', branch: 'JIT-MSUS-META', quantity: 5, shipDate: '2026-10-15', soEtd: '2026-10-16' },
+      ],
+      [{ emsPo: 'P1', cpn: 'A', reportDate: '2026-10-10', confirmedShipDate: '2026-10-12', dockDate: '2026-10-20' }],
+    );
+    const data: ShippingPerformanceResponse = {
+      from: '2026-07-31', to: '2026-10-29', period: 90, firstOrderReport: '2026-10-10', shipments: 2, matched: 1,
+      totals: shipOnTime(lines), previous: shipOnTime([]), trend: shipTrend(lines, lastMonths('2026-10-29', 24)),
+      byShipTo: shipGroups(lines, (l) => l.shipTo ?? 'Unknown'), byBranch: shipGroups(lines, (l) => l.branch ?? 'Unknown'),
+      late: lines.filter((l) => (l.vsConfirmed ?? l.vsEtd ?? 0) > 0),
+    };
+    const html = render(h(PerformancePage), [[['performance-shipping', '', '90'], data]], '/performance?tab=shipping');
+    expect(html).toContain('On time vs Wintec confirmed');
+    expect(html).toContain('Where we ship late');
+    expect(html).toContain('CELESTICA');
+    expect(html).toMatch(/3(<!-- -->)?d late/); // shipped 10-15 vs confirmed 10-12
+  });
+
+  it('shows past-due receipts per report and receipt-to-ship days', async () => {
+    const { PerformancePage } = await import('../src/features/performance/PerformancePage');
+    const { lastMonths, pastDueTrend, receiptToShip } = await import('../shared/performance');
+    const rows = [
+      { reportDate: '2026-10-10', branch: 'JIT-MSUS-META', daysPastDue: 40, quantity: 5 },
+      { reportDate: '2026-10-18', branch: 'JIT-MSUS-META', daysPastDue: 3, quantity: 5 },
+    ];
+    const pastDue = pastDueTrend(rows);
+    const data: ReceivingResponse = {
+      reports: 2,
+      pastDue,
+      byBranch: [{ branch: 'JIT-MSUS-META', latest: pastDue[1], trend: pastDue }],
+      current: [{ id: 9, supplier: 'ACME', poNumber: 'PO-LATE', lineRef: '1-1', partNumber: 'A', branch: 'JIT-MSUS-META', quantity: 5, eta: '2026-10-01', status: 'pending', daysPastDue: 28 }],
+      receiptToShip: receiptToShip([{ branch: 'JIT-MSUS-META', receiptDate: '2026-09-01', shipDate: '2026-10-01' }], lastMonths('2026-10-29', 12)),
+    };
+    const html = render(h(PerformancePage), [[['performance-receiving', ''], data]], '/performance?tab=receiving');
+    expect(html).toContain('Past due, not received, per report');
+    expect(html).toContain('PO-LATE');
+    expect(html).toContain('Days from receipt to shipping');
+    expect(html).toMatch(/30d/);
   });
 });

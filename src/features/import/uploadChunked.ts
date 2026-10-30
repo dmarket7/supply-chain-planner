@@ -24,3 +24,20 @@ export async function uploadChunked<R>(opts: {
   }
   return api<R>(`${opts.base}/${id}/complete`, { method: 'POST', body: '{}' });
 }
+
+/** Posts `items` to an upsert route in chunks, each as `{ ...extra, [field]: chunk }`. */
+export async function postChunks(opts: {
+  path: string;
+  field: string;
+  items: unknown[];
+  size: number;
+  extra?: object;
+  onProgress: (done: number, total: number) => void;
+}): Promise<void> {
+  opts.onProgress(0, opts.items.length);
+  for (let i = 0; i < opts.items.length; i += opts.size) {
+    const part = opts.items.slice(i, i + opts.size);
+    await api(opts.path, { method: 'POST', body: JSON.stringify({ ...opts.extra, [opts.field]: part }) });
+    opts.onProgress(i + part.length, opts.items.length);
+  }
+}
