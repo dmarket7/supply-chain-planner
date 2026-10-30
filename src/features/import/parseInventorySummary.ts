@@ -1,6 +1,6 @@
 import type * as XLSX from 'xlsx';
 import { isHeldBranch } from '../../../shared/supply';
-import type { InventoryPositionInput } from '../../../shared/types';
+import type { InventoryPositionInput, ReceiptInput } from '../../../shared/types';
 import { toIsoDate } from './normalize';
 import { parseSheet, type Cell } from './parseWorkbook';
 import { findSheet, norm, number, text } from './sheetColumns';
@@ -19,6 +19,10 @@ const COLUMNS = {
   description: 'description',
   commodity: 'commodity',
   receivedDate: 'materialrecdate',
+  arrivedDate: 'actualreceivedate',
+  poNumber: 'wintecpo',
+  poLine: 'wintecpoline',
+  poQty: 'poqty',
 } as const;
 type Column = keyof typeof COLUMNS;
 const REQUIRED: Column[] = ['partNumber', 'branch', 'onhand', 'available'];
@@ -38,6 +42,8 @@ export interface ParsedInventory {
   parts: number;
   /** On hand in quarantine, RMA, cycle-count and in-transit branches. */
   heldUnits: number;
+  /** Every received lot, open or closed, summed per PO line, branch and receipt date. */
+  receipts: ReceiptInput[];
   errors: string[];
 }
 
@@ -58,9 +64,21 @@ export function parseInventorySummary(wb: XLSX.WorkBook, sheetName: string): Par
   };
 
   const positions = new Map<string, InventoryPositionInput>();
+  const receipts = new Map<string, ReceiptInput>();
   const errors: string[] = [];
   let closedRows = 0;
   sheet.rows.forEach((r, i) => {
+    const receipt = receiptOf(r, get);
+    if (receipt) {
+      const key = [receipt.poNumber, receipt.poLine, receipt.branch, receipt.receiptDate].join('\u0000');
+      const prev = receipts.get(key);
+      if (!prev) receipts.set(key, receipt);
+      else {
+        prev.quantity = prev.quantity === null && receipt.quantity === null ? null : (prev.quantity ?? 0) + (receipt.quantity ?? 0);
+        prev.arrivedDate ??= receipt.arrivedDate;
+        prev.partNumber ??= receipt.partNumber;
+      }
+    }
     if (/closed/i.test(text(get(r, 'status')) ?? '')) {
       closedRows++;
       return;
@@ -102,6 +120,25 @@ export function parseInventorySummary(wb: XLSX.WorkBook, sheetName: string): Par
     positions: list,
     parts: new Set(list.map((p) => p.partNumber)).size,
     heldUnits: list.filter((p) => isHeldBranch(p.branch)).reduce((n, p) => n + p.onhand, 0),
+    receipts: [...receipts.values()],
     errors,
+  };
+}
+
+/** A received lot: needs a PO, line, branch and MaterialRecDate. */
+function receiptOf(r: Record<string, Cell>, get: (row: Record<string, Cell>, c: Column) => Cell): ReceiptInput | null {
+  const poNumber = text(get(r, 'poNumber'));
+  const poLine = text(get(r, 'poLine'));
+  const branch = text(get(r, 'branch'));
+  const receiptDate = toIsoDate(get(r, 'receivedDate'));
+  if (!poNumber || !poLine || !branch || !receiptDate) return null;
+  return {
+    poNumber,
+    poLine,
+    branch,
+    partNumber: text(get(r, 'partNumber')),
+    receiptDate,
+    arrivedDate: toIsoDate(get(r, 'arrivedDate')),
+    quantity: number(get(r, 'poQty')),
   };
 }

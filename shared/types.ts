@@ -712,6 +712,40 @@ export const inventoryPositionsChunkSchema = z.object({
   positions: z.array(inventoryPositionInputSchema).min(1).max(INVENTORY_CHUNK_SIZE),
 });
 
+/** One received lot of a PO line, from the Inventory Summary tab (open and closed rows). */
+export const receiptInputSchema = z.object({
+  poNumber: z.string().min(1),
+  poLine: z.string().min(1),
+  branch: z.string().min(1),
+  partNumber: nullableText,
+  receiptDate: isoDate,
+  arrivedDate: nullableDate,
+  quantity: z.number().nullable(),
+});
+export type ReceiptInput = z.infer<typeof receiptInputSchema>;
+export const RECEIPT_CHUNK_SIZE = 500;
+export const receiptsChunkSchema = z.object({ reportDate: isoDate, receipts: z.array(receiptInputSchema).min(1).max(RECEIPT_CHUNK_SIZE) });
+
+/** One shipped sales order line, from the Transactions tab. */
+export const shippedOrderInputSchema = z.object({
+  dedupeKey: z.string().min(1).max(400),
+  shipTo: nullableText,
+  odmPo: nullableText,
+  odmPoLine: nullableText,
+  partNumber: nullableText,
+  branch: nullableText,
+  wintecPo: nullableText,
+  quantity: z.number().nullable(),
+  shipDate: isoDate,
+  soEtd: nullableDate,
+  soEta: nullableDate,
+  receiptDate: nullableDate,
+  tracking: nullableText,
+});
+export type ShippedOrderInput = z.infer<typeof shippedOrderInputSchema>;
+export const SHIPPED_CHUNK_SIZE = 500;
+export const shippedChunkSchema = z.object({ reportDate: isoDate, rows: z.array(shippedOrderInputSchema).min(1).max(SHIPPED_CHUNK_SIZE) });
+
 export interface InventorySnapshotInfo {
   id: number;
   fileName: string;
