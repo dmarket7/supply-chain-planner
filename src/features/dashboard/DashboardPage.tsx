@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { SupplierStatusBadge } from '../performance/common';
 import { daysBetween, todayIso } from '../../../shared/dates';
 import type { DashboardBucket, DashboardResponse, DashboardTop, SupplyOrderRow } from '../../../shared/types';
 import { Card, ErrorNote, PageHeader, StatTile, tableCls, tdCls, thCls } from '../../components/ui';
@@ -255,6 +256,33 @@ export function DashboardPage() {
               </table>
             ) : (
               <p className="text-sm text-slate-500">None.</p>
+            )}
+          </Issue>
+          <Issue
+            title="Suppliers consistently late"
+            count={data?.suppliers?.flagged ?? 0}
+            summary="Consistently late or getting worse against their first ETA, last 90 days"
+            link={{ to: '/performance', label: 'Supplier scorecard' }}
+          >
+            {data?.suppliers?.rows.length ? (
+              <table className={tableCls}>
+                <thead>
+                  <tr>{['Supplier', 'Status', 'Received', 'On time', 'Median late'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {data.suppliers.rows.map((s) => (
+                    <tr key={s.supplier}>
+                      <td className={tdCls}>{s.supplier}</td>
+                      <td className={tdCls}><SupplierStatusBadge status={s.status} /></td>
+                      <td className={`${tdCls} tabular-nums`}>{s.arrivals.toLocaleString()}</td>
+                      <td className={`${tdCls} tabular-nums`}>{s.onTimePct === null ? '—' : `${Math.round(s.onTimePct)}%`}</td>
+                      <td className={`${tdCls} tabular-nums`}>{s.medianDaysLate === null ? '—' : `${s.medianDaysLate}d`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-slate-500">None flagged yet. Flags need a few months of weekly uploads.</p>
             )}
           </Issue>
           <Issue

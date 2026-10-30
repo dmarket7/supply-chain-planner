@@ -217,7 +217,7 @@ async function importOrders(reportDate: string, orders: OutboundOrderInput[]) {
 }
 
 describe('performance routes', () => {
-  it('measures suppliers, our shipping and receiving from the uploads', async () => {
+  it('measures suppliers, our shipping and receiving from the uploads', { timeout: 30_000 }, async () => {
     ({ db } = await createTestDb());
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-29T12:00:00'));

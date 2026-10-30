@@ -12,16 +12,27 @@ export interface TrendSeries {
 }
 
 export const monthLabel = (m: string) => new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
-const fmtPct = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${Math.round(v)}%`);
+const pctFormat = (v: number) => `${Math.round(v)}%`;
 
 type Row = Record<string, string | number | null> & { month: string };
 
 /**
- * On-time % per month, one line per series, on one 0–100% axis. Months with no lines leave a gap.
- * A table view under the chart lists the same numbers with their line counts.
+ * On-time % per month (or, with `percent` off, another measure such as median days), one line per
+ * series on one axis. Months with no lines leave a gap. A table view lists the same numbers with counts.
  */
-export function TrendChart({ series, unit = 'lines' }: { series: TrendSeries[]; unit?: string }) {
+export function TrendChart({
+  series,
+  unit = 'lines',
+  percent = true,
+  format = pctFormat,
+}: {
+  series: TrendSeries[];
+  unit?: string;
+  percent?: boolean;
+  format?: (v: number) => string;
+}) {
   const [table, setTable] = useState(false);
+  const fmtPct = (v: number | null | undefined) => (v === null || v === undefined ? '—' : format(v));
   const months = series[0]?.points.map((p) => p.month) ?? [];
   const data = months.map((month, i) => ({
     ...Object.fromEntries(series.flatMap((s) => [[s.key, s.points[i]?.onTimePct ?? null], [`${s.key}__n`, s.points[i]?.count ?? 0]])),
@@ -84,7 +95,14 @@ export function TrendChart({ series, unit = 'lines' }: { series: TrendSeries[]; 
             <LineChart data={data} margin={{ top: 12, right: 48, bottom: 0, left: -16 }}>
               <CartesianGrid vertical={false} stroke="var(--grid)" />
               <XAxis dataKey="month" tickFormatter={monthLabel} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} axisLine={{ stroke: 'var(--grid)' }} tickLine={false} minTickGap={8} />
-              <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} axisLine={false} tickLine={false} />
+              <YAxis
+                domain={percent ? [0, 100] : [0, 'auto']}
+                ticks={percent ? [0, 25, 50, 75, 100] : undefined}
+                tickFormatter={(v: number) => format(v)}
+                tick={{ fill: 'var(--text-secondary)', fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip content={ChartTooltip} cursor={{ stroke: 'var(--grid)', strokeWidth: 2 }} />
               {series.map((s) => (
                 <Line
@@ -136,7 +154,7 @@ export function Sparkline({ points, color = 'var(--series-1)' }: { points: Month
     current += `${current ? 'L' : 'M'}${(i * step).toFixed(1)},${y(p.onTimePct).toFixed(1)}`;
   });
   if (current) segments.push(current);
-  const title = points.map((p) => `${monthLabel(p.month)}: ${fmtPct(p.onTimePct)} (${p.count})`).join('\n');
+  const title = points.map((p) => `${monthLabel(p.month)}: ${p.onTimePct === null ? '—' : pctFormat(p.onTimePct)} (${p.count})`).join('\n');
   return (
     <svg width={w} height={h} role="img" aria-label={`On time by month: ${title.replace(/\n/g, ', ')}`}>
       <title>{title}</title>

@@ -1,6 +1,6 @@
 import { ORDER_CHANGE_KINDS, type OrderChangeCause, type OrderChangeKind, type OrderChangeSummary, type OrderLineState } from './orderChanges';
 import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues, TruckSummary } from './pallets';
-import type { MonthPoint, OnTime, PastDuePoint, ShipBaseline, ShipGroup, ShipOnTime, ShippedLine, SupplierLine, SupplierRating } from './performance';
+import type { MonthPoint, OnTime, PastDuePoint, ShipBaseline, ShipGroup, ShipOnTime, ShippedLine, SupplierLine, SupplierRating, SupplierStatus } from './performance';
 import type { ProgressCounts } from './progress';
 import type { OrderSupply, PartSupply, Readiness } from './supply';
 import { z } from 'zod';
@@ -853,6 +853,8 @@ export interface DashboardResponse {
       noEtaUnits: number;
     };
   };
+  /** Suppliers flagged consistently late or getting worse over the last 90 days (see Performance). */
+  suppliers?: { flagged: number; rows: { supplier: string; status: SupplierStatus; onTimePct: number | null; arrivals: number; medianDaysLate: number | null }[] };
 }
 
 /* ---------- Performance ---------- */

@@ -2,9 +2,15 @@ import { useBranch } from '../../app/branch';
 import { ChipGroup, useUrlFilters } from '../../components/filters';
 import { PageHeader } from '../../components/ui';
 import { PERIOD_OPTIONS } from './common';
+import { ReceivingTab } from './ReceivingTab';
+import { ShippingTab } from './ShippingTab';
 import { SuppliersTab } from './SuppliersTab';
 
-const TABS = [{ value: 'suppliers', label: 'Suppliers' }] as const;
+const TABS = [
+  { value: 'suppliers', label: 'Suppliers' },
+  { value: 'shipping', label: 'Our shipping' },
+  { value: 'receiving', label: 'Receiving' },
+] as const;
 type Tab = (typeof TABS)[number]['value'];
 
 /**
@@ -21,10 +27,12 @@ export function PerformancePage() {
       <PageHeader
         title={branch ? `Performance · ${branch}` : 'Performance'}
         description="On-time performance from the uploaded reports. Each weekly upload records the promises made, so these measures grow more complete over time."
-        actions={<ChipGroup label="Period" value={period} options={PERIOD_OPTIONS} onChange={(v) => f.set('period', v === '90' ? null : v)} />}
+        actions={tab !== 'receiving' && <ChipGroup label="Period" value={period} options={PERIOD_OPTIONS} onChange={(v) => f.set('period', v === '90' ? null : v)} />}
       />
       <ChipGroup label="View" value={tab} options={[...TABS]} onChange={(v) => f.set('tab', v === 'suppliers' ? null : v)} />
       {tab === 'suppliers' && <SuppliersTab branch={branch} period={period} />}
+      {tab === 'shipping' && <ShippingTab branch={branch} period={period} />}
+      {tab === 'receiving' && <ReceivingTab branch={branch} />}
     </div>
   );
 }

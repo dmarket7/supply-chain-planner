@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { addDays, todayIso } from '../../shared/dates';
-import type { ArrivalsResponse, InboundResponse, OutboundResponse, Shipment, SupplyResponse } from '../../shared/types';
+import type { ArrivalsResponse, DashboardResponse, InboundResponse, OutboundResponse, Shipment, SupplyResponse } from '../../shared/types';
 import { getDb } from '../db/client';
 import { activeImport } from '../poHistory';
 import { dashboard, supplyParts, withSupply } from '../dashboard';
@@ -11,6 +11,7 @@ import { inventoryInfo, previousAvailable } from '../inventory';
 import { snapshotInfo } from '../outbound';
 import { loadRatioLookup } from '../palletRatios';
 import { groupInboundByDay, groupInboundByPart, outboundReport, supplierScorecard, toArrivalEntry, withPallets } from '../reports';
+import { supplierPerformance } from '../performance';
 import { loadSupply } from '../supply';
 import { branchFilter, shipmentColumns } from './common';
 
@@ -109,5 +110,14 @@ reportsRoutes.get('/dashboard', async (c) => {
     loadRatioLookup(db),
     db.select({ reportDate: imports.reportDate }).from(imports).where(activeImport).orderBy(desc(imports.reportDate)).limit(1),
   ]);
-  return c.json(dashboard(supply, ratios, lastImport?.reportDate ?? null, todayIso()));
+  const perf = await supplierPerformance(db, { branch, period: 90, includeHistory: false, today: todayIso() });
+  const flagged = perf.suppliers.filter((s) => s.status === 'consistently_late' || s.status === 'getting_worse');
+  const body: DashboardResponse = {
+    ...dashboard(supply, ratios, lastImport?.reportDate ?? null, todayIso()),
+    suppliers: {
+      flagged: flagged.length,
+      rows: flagged.slice(0, 5).map((s) => ({ supplier: s.supplier, status: s.status!, onTimePct: s.arrival.onTimePct, arrivals: s.arrival.count, medianDaysLate: s.arrival.medianDaysLate })),
+    },
+  };
+  return c.json(body);
 });

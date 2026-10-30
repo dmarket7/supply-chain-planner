@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { addDays, todayIso } from '../../../shared/dates';
 import type { ArrivalsResponse } from '../../../shared/types';
@@ -74,43 +75,16 @@ export function ArrivalLogPage() {
         <StatTile label="Average days late" value={late.length ? avgLate.toFixed(1) : '—'} hint="Among late arrivals" />
       </div>
 
-      {!supplier && (data?.scorecard.length ?? 0) > 0 && (
-        <Card className="overflow-x-auto p-0">
-          <h2 className="px-4 pt-4 font-medium">Supplier scorecard</h2>
-          <table className={tableCls}>
-            <thead>
-              <tr>{['Supplier', 'Arrivals', 'On time', 'On-time %', 'Avg variance'].map((h) => <th key={h} className={thCls}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {data!.scorecard.map((s) => (
-                <tr key={s.supplier} onClick={() => setSupplier(s.supplier)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900">
-                  <td className={tdCls}>{s.supplier}</td>
-                  <td className={`${tdCls} tabular-nums`}>{s.arrivals}</td>
-                  <td className={`${tdCls} tabular-nums`}>{s.onTime}</td>
-                  <td className={tdCls}>
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                        <div className="h-full rounded-full" style={{ width: `${s.onTimePct}%`, background: 'var(--series-1)' }} />
-                      </div>
-                      <span className="tabular-nums">{s.onTimePct}%</span>
-                    </div>
-                  </td>
-                  <td className={tdCls}>
-                    <VarianceCell days={s.avgVarianceDays} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+      <p className="text-sm text-slate-500">
+        Supplier trends, consistently-late flags and shipping performance are on <Link to="/performance" className="underline">Performance</Link>.
+      </p>
 
       <Card className="overflow-x-auto p-0">
         <h2 className="px-4 pt-4 font-medium">Arrivals{supplier && ` · ${supplier}`}</h2>
         {isLoading ? (
           <div className="p-6 text-sm text-slate-500">Loading…</div>
         ) : allEntries.length === 0 ? (
-          <div className="p-4"><Empty>No arrivals recorded in this range. Mark shipments as arrived from the Shipments or Inbound pages.</Empty></div>
+          <div className="p-4"><Empty>No arrivals recorded in this range. Mark shipments as arrived from the Inbound page.</Empty></div>
         ) : (
           <table className={tableCls}>
             <thead>
