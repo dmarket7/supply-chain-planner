@@ -1,6 +1,6 @@
 import { ORDER_CHANGE_KINDS, type OrderChangeCause, type OrderChangeKind, type OrderChangeSummary, type OrderLineState } from './orderChanges';
 import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues, TruckSummary } from './pallets';
-import type { MonthPoint, OnTime, PastDuePoint, ShipBaseline, ShipGroup, ShipOnTime, ShippedLine, SupplierLine, SupplierRating, SupplierStatus } from './performance';
+import type { MonthPoint, OnTime, PastDuePoint, ShipBaseline, ShipGroup, ShipOnTime, ShippedLine, SupplierLine, SupplierRating, SupplierReportData, SupplierStatus } from './performance';
 import type { ProgressCounts } from './progress';
 import type { OrderSupply, PartSupply, Readiness } from './supply';
 import { z } from 'zod';
@@ -887,6 +887,18 @@ export interface SupplierDetailResponse {
   trend: { arrival: MonthPoint[]; ship: MonthPoint[] };
   /** Latest first by how late; at most 300. */
   lines: SupplierLine[];
+}
+
+export interface SupplierReportResponse extends SupplierReportData {
+  from: string;
+  to: string;
+  today: string;
+  branch: string | null;
+  includeHistory: boolean;
+  /** Report date of the first kept Supplier POs upload. */
+  firstUpload: string | null;
+  /** Supplier POs report dates in the range: changes are counted between consecutive uploads. */
+  uploads: string[];
 }
 
 export interface ShippingPerformanceResponse {

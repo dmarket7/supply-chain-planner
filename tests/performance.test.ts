@@ -3,13 +3,17 @@ import {
   ageBucket,
   lastMonths,
   matchShipments,
+  monthsBetween,
   pastDueTrend,
   receiptToShip,
   receivedDates,
   scoreSuppliers,
   supplierLine,
+  supplierReport,
+  type LineMoves,
   type SupplierLineInput,
 } from '../shared/performance';
+import { supplierWorkbook } from '../src/features/performance/supplierWorkbook';
 import { findTransactionsSheet, parseTransactions } from '../src/features/import/parseTransactions';
 import * as XLSX from 'xlsx';
 
@@ -114,6 +118,49 @@ describe('supplier scorecard', () => {
   });
 });
 
+describe('supplier report', () => {
+  const moved = { reportDate: '2026-10-18', from: '2026-10-20', to: '2026-10-27' };
+  const inputs = [
+    // Late by 7 days after one ETA move.
+    line({ id: 1, poStatus: 'closed', eta: '2026-10-27', etaMoves: [moved] }),
+    // On time.
+    line({ id: 2, lineRef: '2-1', poStatus: 'closed', eta: '2026-10-25' }),
+    // Still open, past its first ETA, ETA and ETD moved.
+    line({ id: 3, lineRef: '3-1', eta: '2026-11-05', etaMoves: [{ ...moved, to: '2026-11-05' }], etdMoves: [{ reportDate: '2026-10-18', from: '2026-10-10', to: '2026-10-20' }] }),
+    // Another supplier whose ETA move was before the range.
+    line({ id: 4, supplier: 'OTHER', eta: '2026-12-01', etaMoves: [{ reportDate: '2026-09-01', from: '2026-11-01', to: '2026-12-01' }] }),
+  ];
+  const arrived = new Map([[1, '2026-10-27'], [2, '2026-10-24']]);
+  const lines = inputs.map((l) => supplierLine(l, arrived.get(l.id) ?? null));
+  const moves = new Map<number, LineMoves>(inputs.map((l) => [l.id, { eta: l.etaMoves, etd: l.etdMoves }]));
+  const report = supplierReport(lines, moves, { from: '2026-10-01', to: '2026-10-31', today: '2026-10-30', includeHistory: false });
+
+  it('counts late deliveries, open past-due lines and ETA/ETD changes per supplier', () => {
+    expect(report.suppliers).toEqual([
+      expect.objectContaining({ supplier: 'ACME', received: 2, measured: 2, late: 1, onTimePct: 50, maxDaysLate: 7, openPastDue: 1, etaChanges: 2, etdChanges: 1, linesWithEtaChanges: 2, etaDaysPushed: 23 }),
+    ]);
+    expect(report.late.map((l) => [l.lineRef, l.daysLate, l.etaChanges])).toEqual([['1-1', 7, 1]]);
+    expect(report.openPastDue.map((l) => [l.lineRef, l.firstEta, l.finalEta, l.daysLate])).toEqual([['3-1', '2026-10-20', '2026-11-05', 10]]);
+    expect(report.changes.map((c) => [c.lineRef, c.field, c.days])).toEqual([['1-1', 'ETA', 7], ['3-1', 'ETA', 16], ['3-1', 'ETD', 10]]);
+    expect(report.months).toEqual([{ supplier: 'ACME', month: '2026-10', measured: 2, late: 1, onTimePct: 50, medianDaysLate: 7, etaChanges: 2 }]);
+  });
+
+  it('writes an Excel workbook with real dates and percentages', () => {
+    const wb = supplierWorkbook({ ...report, from: '2026-10-01', to: '2026-10-31', today: '2026-10-30', branch: null, includeHistory: false, firstUpload: '2026-10-10', uploads: ['2026-10-10', '2026-10-18'] });
+    const read = XLSX.read(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), { cellDates: true });
+    expect(read.SheetNames).toEqual(['Suppliers', 'Late deliveries', 'Open past due', 'Date changes', 'By month', 'About']);
+    const suppliers = XLSX.utils.sheet_to_json<Record<string, unknown>>(read.Sheets.Suppliers);
+    expect(suppliers[0]).toMatchObject({ Supplier: 'ACME', Late: 1, 'Open past due (today)': 1, 'ETA changes': 2, 'On-time %': 0.5 });
+    const late = read.Sheets['Late deliveries'];
+    expect(late.M2.w).toBe('2026-10-27');
+    expect(late['!autofilter']?.ref).toBe('A1:T2');
+  });
+
+  it('lists the months of a range', () => {
+    expect(monthsBetween('2025-11-15', '2026-02-01')).toEqual(['2025-11', '2025-12', '2026-01', '2026-02']);
+  });
+});
+
 describe('our shipping', () => {
   it('compares a shipment with the first confirmed and requested dates seen before it shipped', () => {
     const seen = [
@@ -175,7 +222,7 @@ import { vi } from 'vitest';
 import type { Db } from '../server/db/client';
 import type { AppEnv } from '../server/env';
 import { dedupeKeysForFile } from '../shared/importKeys';
-import type { OutboundOrderInput, ReceivingResponse, ShipmentInput, ShippingPerformanceResponse, SupplierDetailResponse, SupplierPerformanceResponse } from '../shared/types';
+import type { OutboundOrderInput, ReceivingResponse, ShipmentInput, ShippingPerformanceResponse, SupplierDetailResponse, SupplierPerformanceResponse, SupplierReportResponse } from '../shared/types';
 import { createTestDb } from './helpers/testDb';
 
 let db: Db;
@@ -238,6 +285,11 @@ describe('performance routes', () => {
       expect(s.suppliers.find((x) => x.supplier === 'ACME')).toMatchObject({ arrival: { count: 1, onTimePct: 0 }, openLines: 1 });
       const detail = await get<SupplierDetailResponse>('/perf/suppliers/ACME');
       expect(detail.lines[0]).toMatchObject({ firstEta: '2026-10-14', arrived: '2026-10-17', arrivalDaysLate: 3 });
+
+      const report = await get<SupplierReportResponse>('/perf/supplier-report?from=2026-10-01');
+      expect(report).toMatchObject({ from: '2026-10-01', to: '2026-10-29', uploads: ['2026-10-10', '2026-10-18'] });
+      expect(report.late.map((l) => [l.poNumber, l.daysLate])).toEqual([['0150001', 3]]);
+      expect(report.openPastDue.map((l) => l.poNumber)).toEqual(['0150003', '0150002']);
 
       const ship = await get<ShippingPerformanceResponse>('/perf/shipping');
       expect(ship).toMatchObject({ shipments: 1, matched: 1, firstOrderReport: '2026-10-10' });
