@@ -3,7 +3,7 @@ import { createElement as h } from 'react';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { CoverageRow, ImportHistoryRow, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
+import type { CoverageRow, ImportHistoryRow, SupplierPerformanceResponse, LineTracking, OutboundResponse, PalletRatioRow, PalletRatiosResponse, Shipment, ShipmentDetail } from '../shared/types';
 import { BranchProvider } from '../src/app/branch';
 import { TrackingPanel } from '../src/features/shipments/TrackingPanel';
 import { changeNotice, TrackingSetupPage } from '../src/features/tracking/TrackingSetupPage';
@@ -440,5 +440,31 @@ describe('data table', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('performance page', () => {
+  it('shows the supplier scorecard, worst first, with status flags', async () => {
+    const { PerformancePage } = await import('../src/features/performance/PerformancePage');
+    const { lastMonths } = await import('../shared/performance');
+    const months = lastMonths('2026-10-29', 6).map((month) => ({ month, count: 6, onTimePct: 30 }));
+    const ot = (count: number, onTime: number) => ({ count, onTime, onTimePct: count ? Math.round((onTime / count) * 1000) / 10 : null, medianDaysLate: count > onTime ? 9 : null });
+    const data: SupplierPerformanceResponse = {
+      from: '2026-07-31', to: '2026-10-29', period: 90, includeHistory: false, firstUpload: '2026-10-10',
+      totals: { arrival: ot(20, 8), previousArrival: ot(10, 6), ship: ot(4, 3), historyArrivals: 300, suppliers: 2, consistentlyLate: 1, gettingWorse: 0, etaMoves: 7 },
+      trend: { arrival: months, ship: months },
+      suppliers: [
+        { supplier: 'SLOW PARTS', status: 'consistently_late', arrival: ot(16, 4), ship: ot(2, 1), lines: 20, openLines: 4, etaMovesPerLine: 0.5, etdAfterRequestPct: 60, months },
+        { supplier: 'FAST PARTS', status: 'reliable', arrival: ot(4, 4), ship: ot(2, 2), lines: 4, openLines: 0, etaMovesPerLine: 0, etdAfterRequestPct: 0, months },
+      ],
+    };
+    const html = render(h(PerformancePage), [[['performance-suppliers', '', '90', false], data]], '/performance');
+    expect(html).toContain('Supplier scorecard');
+    expect(html.indexOf('SLOW PARTS')).toBeLessThan(html.indexOf('FAST PARTS'));
+    expect(html).toContain('Consistently late');
+    expect(html).toContain('Reliable');
+    expect(html).toMatch(/40%/); // 8 of 20 received on time
+    expect(html).toMatch(/-20 pts vs the period before/);
+    expect(html).toMatch(/300(<!-- -->)? more lines were received/);
   });
 });

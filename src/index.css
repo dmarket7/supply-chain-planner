@@ -16,6 +16,13 @@
   --late: #e5a00d; /* inbound late */
   --short: #d03b3b; /* short */
   --unknown: #8b95a5; /* no inventory imported */
+  /* Performance: up to four series (validated as a set with --series-1..3) */
+  --series-4: #eda100;
+  /* Days past due, an ordinal blue ramp: light = recent, dark = oldest */
+  --age-1: #86b6ef;
+  --age-2: #3987e5;
+  --age-3: #1c5cab;
+  --age-4: #0d366b;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -30,6 +37,12 @@
     --series-3: #199e70;
     --waiting: #9085e9;
     --late: #c98500;
+    --series-4: #c98500;
+    /* On the dark surface the oldest step is the brightest. */
+    --age-1: #184f95;
+    --age-2: #256abf;
+    --age-3: #5598e7;
+    --age-4: #9ec5f4;
   }
 }
 

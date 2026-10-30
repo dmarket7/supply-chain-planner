@@ -9,6 +9,7 @@ const NAV = [
   { to: '/inbound', label: 'Inbound' },
   { to: '/outbound', label: 'Outbound' },
   { to: '/inventory', label: 'Inventory' },
+  { to: '/performance', label: 'Performance' },
 ];
 const MORE_NAV = [
   { to: '/import', label: 'Import report' },

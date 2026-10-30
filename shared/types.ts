@@ -1,5 +1,6 @@
 import { ORDER_CHANGE_KINDS, type OrderChangeCause, type OrderChangeKind, type OrderChangeSummary, type OrderLineState } from './orderChanges';
 import type { CommodityEstimate, LinePallets, PalletBasis, PalletSummary, RatioSource, RatioValues, TruckSummary } from './pallets';
+import type { MonthPoint, OnTime, PastDuePoint, ShipBaseline, ShipGroup, ShipOnTime, ShippedLine, SupplierLine, SupplierRating } from './performance';
 import type { ProgressCounts } from './progress';
 import type { OrderSupply, PartSupply, Readiness } from './supply';
 import { z } from 'zod';
@@ -852,4 +853,75 @@ export interface DashboardResponse {
       noEtaUnits: number;
     };
   };
+}
+
+/* ---------- Performance ---------- */
+
+export interface SupplierPerformanceResponse {
+  from: string;
+  to: string;
+  period: number;
+  includeHistory: boolean;
+  /** Report date of the first kept Supplier POs upload: promises are known from then on. */
+  firstUpload: string | null;
+  totals: {
+    arrival: OnTime;
+    /** The period before, for the change. */
+    previousArrival: OnTime;
+    ship: OnTime;
+    /** Arrivals in the period that only count with history on (received before we saw their promise). */
+    historyArrivals: number;
+    suppliers: number;
+    consistentlyLate: number;
+    gettingWorse: number;
+    etaMoves: number;
+  };
+  trend: { arrival: MonthPoint[]; ship: MonthPoint[] };
+  suppliers: SupplierRating[];
+}
+
+export interface SupplierDetailResponse {
+  supplier: string;
+  trend: { arrival: MonthPoint[]; ship: MonthPoint[] };
+  /** Latest first by how late; at most 300. */
+  lines: SupplierLine[];
+}
+
+export interface ShippingPerformanceResponse {
+  from: string;
+  to: string;
+  period: number;
+  /** First ODM Open Order report: confirmed and requested dates are known for orders listed from then on. */
+  firstOrderReport: string | null;
+  shipments: number;
+  /** Shipments matched to an order in an earlier ODM report. */
+  matched: number;
+  totals: ShipOnTime;
+  previous: ShipOnTime;
+  trend: ({ month: string } & Record<ShipBaseline, MonthPoint>)[];
+  byShipTo: ShipGroup[];
+  byBranch: ShipGroup[];
+  late: ShippedLine[];
+}
+
+export interface PastDueLine {
+  id: number;
+  supplier: string;
+  poNumber: string | null;
+  lineRef: string | null;
+  partNumber: string | null;
+  branch: string | null;
+  quantity: number | null;
+  eta: string;
+  status: ShipmentStatus;
+  daysPastDue: number;
+}
+
+export interface ReceivingResponse {
+  /** Kept Supplier POs reports the past-due trend is built from. */
+  reports: number;
+  pastDue: PastDuePoint[];
+  byBranch: { branch: string; latest: PastDuePoint | null; trend: PastDuePoint[] }[];
+  current: PastDueLine[];
+  receiptToShip: { branch: string; shipments: number; medianDays: number | null; months: { month: string; count: number; medianDays: number | null }[] }[];
 }
