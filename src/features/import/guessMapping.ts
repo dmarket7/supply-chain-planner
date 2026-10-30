@@ -23,6 +23,9 @@ export const FIELD_LABELS: Record<TargetField, string> = {
 
 export const REQUIRED_FIELDS: TargetField[] = ['supplier'];
 
+/** A mapping can be imported once it has the required fields, a way to identify lines and a date or status. */
+export const mappingComplete = (m: ColumnMapping) => REQUIRED_FIELDS.every((f) => m[f]) && !!(m.trackingNumber || m.poNumber) && !!(m.promisedArrivalDate || m.poStatus);
+
 /** Columns that matter most for the report; shown first in the mapper. */
 export const PRIMARY_FIELDS: TargetField[] = ['branch', 'supplier', 'poNumber', 'lineRef', 'asn', 'poStatus', 'trackingNumber', 'carrier', 'promisedArrivalDate', 'shipDate'];
 
