@@ -3,37 +3,30 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WorkBook } from 'xlsx';
 import { todayIso } from '../../../shared/dates';
-import { dedupeKeysForFile } from '../../../shared/importKeys';
 import { PROGRESS_BUCKETS, PROGRESS_BUCKET_LABELS } from '../../../shared/progress';
-import {
-  IMPORT_CHUNK_SIZE,
-  INVENTORY_CHUNK_SIZE,
-  OUTBOUND_CHUNK_SIZE,
-  RECEIPT_CHUNK_SIZE,
-  SHIPPED_CHUNK_SIZE,
-  TARGET_FIELDS,
-  type ColumnMapping,
-  type ImportResult,
-  type InventorySnapshotInfo,
-  type OutboundSnapshotInfo,
-  type SavedMapping,
-  type ShipmentInput,
-} from '../../../shared/types';
+import { TARGET_FIELDS, type ColumnMapping, type ImportResult, type OutboundSnapshotInfo, type SavedMapping } from '../../../shared/types';
 import { Card, ErrorNote, PageHeader, tableCls, tdCls, thCls } from '../../components/ui';
 import { api } from '../../lib/api';
 import { formatDate, poLineLabel } from '../../lib/format';
 import { FIELD_LABELS, PRIMARY_FIELDS, REQUIRED_FIELDS, guessMapping } from './guessMapping';
 import { normalizeRow, reportDateFromFileName, type NormalizedRow } from './normalize';
-import { findInventorySheet, parseInventorySummary, type ParsedInventory } from './parseInventorySummary';
-import { findOdmSheet, parseOdmOrders, type ParsedOdmOrders } from './parseOdmOrders';
-import { findTransactionsSheet, parseTransactions, type ParsedTransactions } from './parseTransactions';
 import { headerSignature, parseSheet, readWorkbook, type ParsedSheet } from './parseWorkbook';
+import { BulkImport } from './BulkImport';
 import { ImportHistory } from './ImportHistory';
 import { rebuildPoHistory } from './rebuildHistory';
-import { postChunks, uploadChunked } from './uploadChunked';
-
-/** The tab that holds inbound PO lines in the Meerkat report; other reports fall back to the first sheet. */
-const PREFERRED_SHEET = /supplier\s*po/i;
+import {
+  NO_TAB,
+  poSheetName,
+  readOtherTabs,
+  saveInventory,
+  saveOdmOrders,
+  savePoLines,
+  saveShipped,
+  STEP_TITLES,
+  STEPS,
+  type OtherTabs,
+  type Step,
+} from './saveReport';
 
 type Bucket = 'awaiting' | 'shipped' | 'closed' | 'skipped' | 'error';
 const BUCKET_LABELS: Record<Bucket, string> = {
@@ -44,32 +37,12 @@ const BUCKET_LABELS: Record<Bucket, string> = {
   error: 'Errors',
 };
 
-/** The tabs one import covers, in the order they're saved. */
-const STEPS = ['po', 'outbound', 'inventory', 'shipped'] as const;
-type Step = (typeof STEPS)[number];
-const STEP_TITLES: Record<Step, string> = { po: 'Supplier POs', outbound: 'ODM open orders', inventory: 'Inventory', shipped: 'Shipped orders (Transactions)' };
 type StepState =
   | { status: 'idle' }
   | { status: 'running'; done?: number; total?: number }
   | { status: 'done'; message: string }
   | { status: 'error'; error: unknown };
 const IDLE: Record<Step, StepState> = { po: { status: 'idle' }, outbound: { status: 'idle' }, inventory: { status: 'idle' }, shipped: { status: 'idle' } };
-
-/** A tab read with its own parser; error is set when the tab is there but couldn't be read. */
-interface Tab<T> {
-  parsed: T | null;
-  error: string | null;
-}
-const NO_TAB = { parsed: null, error: null };
-
-function readTab<T>(name: string | null, parse: (name: string) => T): Tab<T> {
-  if (!name) return NO_TAB;
-  try {
-    return { parsed: parse(name), error: null };
-  } catch (e) {
-    return { parsed: null, error: `Couldn't read the ${name} tab: ${e instanceof Error ? e.message : e}` };
-  }
-}
 
 function poResultText(r: ImportResult): string {
   const parts = [`${r.inserted.toLocaleString()} new and ${r.updated.toLocaleString()} updated lines.`];
@@ -116,9 +89,7 @@ export function ImportPage() {
   const [saveName, setSaveName] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Bucket | 'all' | 'warnings'>('all');
-  const [odm, setOdm] = useState<Tab<ParsedOdmOrders>>(NO_TAB);
-  const [inventory, setInventory] = useState<Tab<ParsedInventory>>(NO_TAB);
-  const [transactions, setTransactions] = useState<Tab<ParsedTransactions>>(NO_TAB);
+  const [{ odm, inventory, transactions }, setTabs] = useState<OtherTabs>({ odm: NO_TAB, inventory: NO_TAB, transactions: NO_TAB });
   const [steps, setSteps] = useState<Record<Step, StepState>>(IDLE);
 
   const savedMappings = useQuery({ queryKey: ['mappings'], queryFn: () => api<SavedMapping[]>('/mappings') });
@@ -138,9 +109,7 @@ export function ImportPage() {
     setSteps(IDLE);
     setReading(true);
     setSheet(null);
-    setOdm(NO_TAB);
-    setInventory(NO_TAB);
-    setTransactions(NO_TAB);
+    setTabs({ odm: NO_TAB, inventory: NO_TAB, transactions: NO_TAB });
     try {
       const data = await file.arrayBuffer();
       await new Promise((r) => setTimeout(r, 0)); // let "Reading…" paint before the blocking parse
@@ -148,10 +117,8 @@ export function ImportPage() {
       setFileName(file.name);
       setReportDate(reportDateFromFileName(file.name) ?? todayIso());
       setWorkbook(wb);
-      selectSheet(wb, wb.SheetNames.find((n) => PREFERRED_SHEET.test(n)) ?? wb.SheetNames[0]);
-      setOdm(readTab(findOdmSheet(wb), (n) => parseOdmOrders(wb, n)));
-      setInventory(readTab(findInventorySheet(wb), (n) => parseInventorySummary(wb, n)));
-      setTransactions(readTab(findTransactionsSheet(wb), (n) => parseTransactions(wb, n)));
+      selectSheet(wb, poSheetName(wb));
+      setTabs(readOtherTabs(wb));
     } catch (e) {
       setParseError(`Couldn't read ${file.name}: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -201,18 +168,7 @@ export function ImportPage() {
         id = saved.id;
         setSaveName('');
       }
-      const keys = dedupeKeysForFile(shipments);
-      const rows = shipments.map((s: ShipmentInput, i) => ({ ...s, dedupeKey: keys[i] }));
-      const result = await uploadChunked<ImportResult>({
-        base: '/imports',
-        start: { fileName, sheetName: sheet?.name, reportDate, mappingId: id, rowCount: rows.length },
-        idKey: 'importId',
-        chunkPath: 'rows',
-        field: 'rows',
-        items: rows,
-        size: IMPORT_CHUNK_SIZE,
-        onProgress: progress,
-      });
+      const result = await savePoLines({ fileName, sheetName: sheet?.name, reportDate, mappingId: id, shipments }, progress);
       if (result.needsRebuild) {
         await rebuildPoHistory(progress);
         return `Saved as of ${formatDate(reportDate)}. A report as new or newer was already imported, so the inbound history was rebuilt from every report in date order.`;
@@ -220,37 +176,16 @@ export function ImportPage() {
       return poResultText(result);
     },
     outbound: async (progress) => {
-      const p = odm.parsed!;
-      const result = await uploadChunked<OutboundSnapshotInfo>({
-        base: '/outbound/snapshots',
-        start: { fileName, reportDate, rowCount: p.rowCount, orderCount: p.orders.length, skippedQuotations: p.skippedQuotations },
-        idKey: 'snapshotId',
-        chunkPath: 'orders',
-        field: 'orders',
-        items: p.orders,
-        size: OUTBOUND_CHUNK_SIZE,
-        onProgress: progress,
-      });
-      return outboundResultText(result);
+      return outboundResultText(await saveOdmOrders(odm.parsed!, fileName, reportDate, progress));
     },
     inventory: async (progress) => {
       const p = inventory.parsed!;
-      const result = await uploadChunked<InventorySnapshotInfo>({
-        base: '/inventory/snapshots',
-        start: { fileName, reportDate, rowCount: p.rowCount, positionCount: p.positions.length },
-        idKey: 'snapshotId',
-        chunkPath: 'positions',
-        field: 'positions',
-        items: p.positions,
-        size: INVENTORY_CHUNK_SIZE,
-        onProgress: progress,
-      });
-      await postChunks({ path: '/inventory/receipts', field: 'receipts', items: p.receipts, size: RECEIPT_CHUNK_SIZE, extra: { reportDate }, onProgress: progress });
+      const result = await saveInventory(p, fileName, reportDate, progress);
       return `Stock for ${p.parts.toLocaleString()} parts in ${result.positionCount.toLocaleString()} part-branch positions, and ${p.receipts.length.toLocaleString()} received lots.`;
     },
     shipped: async (progress) => {
       const p = transactions.parsed!;
-      await postChunks({ path: '/shipped/rows', field: 'rows', items: p.rows, size: SHIPPED_CHUNK_SIZE, extra: { reportDate }, onProgress: progress });
+      await saveShipped(p, reportDate, progress);
       return `${p.rows.length.toLocaleString()} shipped order lines, ${formatDate(p.from)} to ${formatDate(p.to)}.`;
     },
   };
@@ -320,6 +255,8 @@ export function ImportPage() {
         </label>
         {parseError && <div className="mt-3"><ErrorNote error={new Error(parseError)} /></div>}
       </Card>
+
+      <BulkImport />
 
       {workbook && sheet && (
         <>
